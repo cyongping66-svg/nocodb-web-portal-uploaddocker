@@ -1,5 +1,6 @@
 # 多階段構建 - 構建階段
-FROM node:18-alpine AS builder
+# 使用 Node.js 20 作為基礎鏡像
+FROM node:20-alpine
 
 WORKDIR /app
 
@@ -25,7 +26,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # 暴露端口
-EXPOSE 80
+EXPOSE 8081
 
 # 啟動 nginx
 CMD ["nginx", "-g", "daemon off;"]
