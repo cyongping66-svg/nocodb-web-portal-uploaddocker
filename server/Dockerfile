@@ -1,6 +1,9 @@
-# 202510092340git config --global http.proxy http://127.0.0.1:git config --global http.proxy http://127.0.0.1:
-# 使用 Node.js 18 作為基礎鏡像
-FROM node:18-alpine
+# git config --global http.proxy http://127.0.0.1:git config --global http.proxy http://127.0.0.1:
+# 使用 Node.js 20 作為基礎鏡像
+FROM node:20-alpine
+
+# 安裝 Python 和 make（用於 node-gyp 構建）
+RUN apk add --no-cache python3 make g++
 
 # 設置工作目錄
 WORKDIR /app
