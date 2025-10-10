@@ -158,7 +158,7 @@ frontend:
 ```bash
 # 後端配置
 NODE_ENV=production
-PORT=3003
+PORT=4000
 
 # 數據庫配置
 DB_PATH=/app/db

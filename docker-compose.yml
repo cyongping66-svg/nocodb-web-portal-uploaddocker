@@ -9,15 +9,15 @@ services:
     restart: unless-stopped
     environment:
       - NODE_ENV=production
-      - PORT=3003
+      - PORT=4000
       - DB_PATH=/app/data
     volumes:
       # 持久化數據庫文件到單獨目錄
       - ./data:/app/data
     expose:
-      - "3003"
+      - "4000"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3003/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:4000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
