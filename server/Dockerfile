@@ -1,3 +1,4 @@
+# 202510092340
 # 使用 Node.js 18 作為基礎鏡像
 FROM node:18-alpine
 
@@ -17,7 +18,7 @@ COPY . .
 RUN mkdir -p /app/data
 
 # 暴露端口
-EXPOSE 3001
+EXPOSE 4000
 
 # 設置環境變量
 ENV NODE_ENV=production
