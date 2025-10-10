@@ -45,7 +45,7 @@ docker-compose ps
 
 # 檢查後端健康狀態
 echo "🩺 檢查後端健康狀態..."
-if curl -f http://localhost:8080/api/health &> /dev/null; then
+if curl -f http://localhost:4000/api/health &> /dev/null; then
     echo "✅ 後端服務啟動成功"
 else
     echo "❌ 後端服務啟動失敗，查看日誌："
@@ -55,7 +55,7 @@ fi
 
 # 檢查前端是否可訪問
 echo "🌐 檢查前端服務..."
-if curl -f http://localhost:8080/ &> /dev/null; then
+if curl -f http://localhost:8081/ &> /dev/null; then
     echo "✅ 前端服務啟動成功"
 else
     echo "❌ 前端服務啟動失敗，查看日誌："
@@ -65,8 +65,8 @@ fi
 
 echo ""
 echo "🎉 部署完成！"
-echo "前端界面: http://your-server-ip:8080"
-echo "後端 API: http://your-server-ip:8080/api"
+echo "前端界面: http://your-server-ip:8081"
+echo "後端 API: http://your-server-ip:4000/api"
 echo ""
 echo "常用命令："
 echo "查看日誌: docker-compose logs"

@@ -90,7 +90,7 @@ max_attempts=30
 attempt=1
 
 while [ $attempt -le $max_attempts ]; do
-    if curl -s -f http://localhost:8080/api/health >/dev/null 2>&1; then
+    if curl -s -f http://localhost:8081/api/health >/dev/null 2>&1; then
         echo -e "${GREEN}✅ 後端 API 正常運行${NC}"
         break
     else
@@ -106,7 +106,7 @@ if [ $attempt -gt $max_attempts ]; then
 else
     # 檢查前端
     echo -e "${YELLOW}檢查前端服務...${NC}"
-    if curl -s -f http://localhost:8080/ >/dev/null 2>&1; then
+    if curl -s -f http://localhost:8081/ >/dev/null 2>&1; then
         echo -e "${GREEN}✅ 前端服務正常運行${NC}"
     else
         echo -e "${RED}❌ 前端服務健康檢查失敗${NC}"
@@ -119,9 +119,9 @@ echo ""
 echo -e "${GREEN}🎉 部署完成！${NC}"
 echo "================================"
 echo -e "${BLUE}📋 服務信息:${NC}"
-echo -e "  🌐 前端地址: http://localhost:8080"
-echo -e "  🔌 API 地址: http://localhost:8080/api"
-echo -e "  📊 健康檢查: http://localhost:8080/api/health"
+echo -e "  🌐 前端地址: http://localhost:8081"
+echo -e "  🔌 API 地址: http://localhost:4000/api"
+echo -e "  📊 健康檢查: http://localhost:4000/api/health"
 echo ""
 echo -e "${BLUE}🛠️  常用命令:${NC}"
 echo -e "  查看狀態: docker-compose ps"
@@ -131,7 +131,7 @@ echo -e "  停止服務: docker-compose down"
 echo ""
 echo -e "${YELLOW}📝 注意事項:${NC}"
 echo -e "  • 數據保存在 ./data 目錄"
-echo -e "  • 確保防火牆開放 8080 端口"
+echo -e "  • 確保防火牆開放 8081 端口"
 echo -e "  • 定期備份 ./data 目錄"
 
 # 最終狀態檢查

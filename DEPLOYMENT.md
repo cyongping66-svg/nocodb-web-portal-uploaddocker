@@ -6,7 +6,7 @@
 
 ### 後端
 - `NODE_ENV`: 運行環境 (development/production)
-- `PORT`: 服務器端口 (默認: 3002)
+- `PORT`: 服務器端口 (默認: 4000)
 
 - **前端**: React 19 + TypeScript + Vite + Tailwind CSS
 - **後端**: Node.js + Express + SQLite
@@ -21,7 +21,7 @@ npm install
 node server.js
 ```
 
-後端將在 http://localhost:3002 啟動
+後端將在 http://localhost:4000 啟動
 
 ### 2. 啟動前端開發服務器
 ```bash
@@ -90,7 +90,7 @@ docker-compose logs
 
 ### 後端
 - `NODE_ENV`: 運行環境 (development/production)
-- `PORT`: 服務器端口 (默認: 3001)
+- `PORT`: 服務器端口 (默認: 4000)
 
 ## 故障排除
 

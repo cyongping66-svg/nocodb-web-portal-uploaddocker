@@ -1,4 +1,4 @@
-# 202510092340
+# 202510092340git config --global http.proxy http://127.0.0.1:git config --global http.proxy http://127.0.0.1:
 # 使用 Node.js 18 作為基礎鏡像
 FROM node:18-alpine
 
