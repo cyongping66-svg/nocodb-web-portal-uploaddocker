@@ -134,7 +134,20 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* 在Toaster组件下方添加移动端汉堡菜单按钮 */}
       <Toaster position="top-right" />
+      
+      {/* 移动端汉堡菜单按钮 */}
+      {isMobileView && (
+        <Button 
+          className="fixed top-4 left-4 z-50 p-2 h-auto" 
+          variant="secondary" 
+          size="icon" 
+          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+        >
+          {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </Button>
+      )}
       <div className="flex h-screen">
         {/* Sidebar */}
         <div className="w-64 border-r border-border bg-card">

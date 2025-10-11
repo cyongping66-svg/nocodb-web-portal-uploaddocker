@@ -1044,7 +1044,7 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {filteredRows.map((row) => (
             <Card key={row.id} className={`relative group transition-all ${selectedRows.has(row.id) ? 'ring-2 ring-primary bg-primary/5' : ''}`}>
               <CardHeader className="pb-2">

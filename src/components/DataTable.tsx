@@ -1490,7 +1490,8 @@ export function DataTable({
       </div>
 
       <div className="border border-border rounded-lg overflow-hidden">
-        <div className="overflow-auto">
+        {/* 桌面版表格 */}
+        <div className="hidden md:block overflow-auto">
           <DndContext 
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -1599,6 +1600,64 @@ export function DataTable({
               </tbody>
             </table>
           </DndContext>
+        </div>
+
+        {/* 移動版卡片列表 */}
+        <div className="md:hidden p-2 space-y-2">
+          {sortedRows.map((row) => (
+            <div key={row.id} className="border border-border rounded-lg p-3 bg-background hover:bg-muted/25 transition-colors">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-2 mb-2">
+                  <button
+                    onClick={() => toggleRowSelection(row.id)}
+                    className="p-1 hover:bg-muted rounded"
+                  >
+                    {selectedRows.has(row.id) ? (
+                      <CheckSquare className="w-4 h-4 text-primary" />
+                    ) : (
+                      <Square className="w-4 h-4 text-muted-foreground" />
+                    )}
+                  </button>
+                  <span className="text-xs text-muted-foreground">ID: {row.id.slice(-6)}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="p-1 h-auto text-red-600"
+                  onClick={() => deleteRow(row.id)}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {table.columns.slice(0, 3).map((column) => {
+                  const value = row[column.id];
+                  return (
+                    <div key={column.id} className="flex items-start gap-2">
+                      <span className="text-xs text-muted-foreground min-w-[60px]">{column.name}:</span>
+                      <div className="flex-1 min-w-0" onClick={() => startEdit(row.id, column.id, column.type === 'file' ? '' : value)}>
+                        {renderCell(row, column)}
+                      </div>
+                    </div>
+                  );
+                })}
+                {table.columns.length > 3 && (
+                  <div className="text-xs text-muted-foreground text-center pt-1">
+                    還有 {table.columns.length - 3} 個欄位...
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          {sortedRows.length === 0 && (
+            <div className="text-center text-muted-foreground py-8">
+              <Search className="w-8 h-8 mx-auto text-muted-foreground/50 mb-2" />
+              <p>{table.rows.length > 0 ? '找不到符合條件的資料' : '尚無資料'}</p>
+              <Button variant="outline" size="sm" onClick={clearFilters} className="mt-2">
+                清除篩選條件
+              </Button>
+            </div>
+          )}
         </div>
         
         {/* 表格底部新增行按鈕 */}
