@@ -201,7 +201,6 @@ export function useTables() {
     batchUpdateRows,
     loading,
     error,
-    refresh,
-    isUsingSupabase: false
+    refresh
   }
 }

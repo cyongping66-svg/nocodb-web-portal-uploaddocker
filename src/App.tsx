@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Table as TableIcon, Grid3X3, Download } from 'lucide-react';
+import { Plus, Table as TableIcon, Grid3X3, Download, Menu, X } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import { Table, ViewMode } from '@/types';
 import { TableManager } from '@/components/TableManager';
@@ -26,25 +26,42 @@ function App() {
     batchUpdateRows,
     loading, 
     error, 
-    refresh, 
-    isUsingSupabase 
+    refresh
   } = useTables();
   
-  const [activeTableId, setActiveTableId] = useState<string | null>(() => {
-    // 從 localStorage 讀取上次選中的表格
-    const savedTableId = localStorage.getItem('activeTableId');
-    return savedTableId || 'sample-employees';
-  });
+  const [activeTableId, setActiveTableId] = useState<string | null>('sample-employees'); // 默認使用示例表格
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [newTableName, setNewTableName] = useState('');
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isMobileView, setIsMobileView] = useState(false);
 
-  // 當選中的表格改變時，保存到 localStorage
+  // 检测屏幕尺寸变化，设置移动视图状态
   useEffect(() => {
-    if (activeTableId) {
-      localStorage.setItem('activeTableId', activeTableId);
-    }
-  }, [activeTableId]);
+    const handleResize = () => {
+      const isMobile = window.innerWidth < 768;
+      setIsMobileView(isMobile);
+      // 在移动视图下默认隐藏侧边栏
+      if (isMobile) {
+        setIsSidebarOpen(false);
+        // 在移动视图下默认使用卡片视图
+        setViewMode('card');
+      } else {
+        setIsSidebarOpen(true);
+        // 在非移动视图下使用网格视图
+        setViewMode('grid');
+      }
+    };
+
+    // 初始化
+    handleResize();
+    // 监听窗口大小变化
+    window.addEventListener('resize', handleResize);
+    // 清理函数
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // 注意：项目已禁用浏览器缓存，不再保存表格选择状态到localStorage
 
   const activeTable = tables?.find(table => table.id === activeTableId);
 
@@ -124,13 +141,22 @@ function App() {
           <div className="p-4 border-b border-border">
             <h1 className="text-xl font-bold text-foreground">孵化之路信息管理系統</h1>
             <div className="mt-2 flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${isUsingSupabase ? 'bg-green-500' : 'bg-orange-500'}`}></div>
+              <div className="w-2 h-2 rounded-full bg-green-500"></div>
               <span className="text-xs text-muted-foreground">
-                {isUsingSupabase ? '雲端存儲' : '本地存儲'}
+                本地存儲 (SQLite)
               </span>
               {error && (
                 <span className="text-xs text-red-500">連接錯誤</span>
               )}
+            </div>
+            
+            {/* 版本信息 - 显示在本地存储文字的下方 */}
+            <div className="mt-1 flex items-center gap-2">
+              {/* 顯示藍色小球 */}
+              <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+              <span className="text-xs text-muted-foreground">
+                版本信息: v1.0.0
+              </span>
             </div>
           </div>
           
@@ -172,10 +198,30 @@ function App() {
               onUpdateTable={updateTable}
             />
           </div>
+          
+          {/* 反馈建议入口 - 放置在页面的最底部 */}
+          <div className="mt-auto p-4 border-t border-border">
+            <a 
+              href="https://omeoffice.com/usageFeedback" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="text-blue-600 hover:text-blue-800 text-sm font-medium underline decoration-dotted underline-offset-2 flex items-center justify-center"
+            >
+              反馈建议入口
+            </a>
+          </div>
         </div>
 
+        {/* 移动端侧边栏遮罩 */}
+        {isMobileView && isSidebarOpen && (
+          <div 
+            className="fixed inset-0 z-30 bg-black bg-opacity-50" 
+            onClick={() => setIsSidebarOpen(false)}
+          />
+        )}
+
         {/* Main Content */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col overflow-hidden">
           {activeTable ? (
             <>
               {/* Header */}
@@ -201,18 +247,22 @@ function App() {
                 </div>
               </div>
 
-              {/* Content */}
-              <div className="flex-1 p-4">
+              {/* Content - 响应式设计 */}
+              <div className="flex-1 p-4 overflow-auto">
                 {viewMode === 'grid' ? (
-                  <DataTable 
-                    table={activeTable} 
-                    onUpdateTable={updateTable}
-                    onCreateRow={createRow}
-                    onUpdateRow={updateRow}
-                    onDeleteRow={deleteRow}
-                  />
+                  <div className="overflow-x-auto">
+                    <DataTable 
+                      table={activeTable} 
+                      onUpdateTable={updateTable}
+                      onCreateRow={createRow}
+                      onUpdateRow={updateRow}
+                      onDeleteRow={deleteRow}
+                    />
+                  </div>
                 ) : (
-                  <CardView table={activeTable} onUpdateTable={updateTable} />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    <CardView table={activeTable} onUpdateTable={updateTable} />
+                  </div>
                 )}
               </div>
             </>

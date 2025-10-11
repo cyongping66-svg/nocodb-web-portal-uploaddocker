@@ -4,8 +4,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# 升级 openssl 到 3.5.4 版本和 libxml2 到 2.13.9 版本
-RUN apk update && apk upgrade openssl=3.5.4-r0 libxml2=2.13.9-r0
+# 升级 openssl 和 libxml2 到仓库中可用的最新版本
+RUN apk update && apk upgrade openssl libxml2
 
 # 複製 package.json 和 package-lock.json
 COPY package*.json ./
@@ -22,8 +22,8 @@ RUN npm run build
 # 生產階段 - 使用 nginx 提供靜態文件
 FROM nginx:alpine
 
-# 升级 openssl 到 3.5.4 版本和 libxml2 到 2.13.9 版本
-RUN apk update && apk upgrade openssl=3.5.4-r0 libxml2=2.13.9-r0
+# 升级 openssl 和 libxml2 到仓库中可用的最新版本
+RUN apk update && apk upgrade openssl libxml2
 
 # 複製構建好的文件到 nginx 目錄
 COPY --from=builder /app/dist /usr/share/nginx/html

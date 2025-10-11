@@ -19,8 +19,18 @@ const defaultTheme = {
   },
   extend: {
     screens: {
+      // 基础断点定义
+      'xs': '360px',      // 移动设备起始点
+      'sm': '640px',      // 小屏幕
+      'md': '768px',      // 平板设备
+      'lg': '1024px',     // 小桌面屏幕
+      'xl': '1200px',     // 中等桌面屏幕
+      '2xl': '1400px',    // 大屏幕
+      '3xl': '1600px',    // 超大屏幕
+      // 指针设备断点
       coarse: { raw: "(pointer: coarse)" },
       fine: { raw: "(pointer: fine)" },
+      // PWA模式断点
       pwa: { raw: "(display-mode: standalone)" },
     },
     colors: {
