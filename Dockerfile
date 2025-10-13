@@ -11,7 +11,7 @@ RUN apk update && apk upgrade openssl libxml2
 COPY package*.json ./
 
 # 安裝依賴
-RUN npm ci
+RUN npm install
 
 # 複製源代碼
 COPY . .
