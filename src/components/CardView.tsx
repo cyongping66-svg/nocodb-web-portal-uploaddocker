@@ -422,7 +422,7 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
         return (
           <Input
             id={inputId}
-            type="date"
+            type="datetime-local"
             value={value || ''}
             onChange={(e) => onChange(e.target.value)}
             className="h-8"
@@ -536,6 +536,10 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
             </a>
           </div>
         );
+      case 'date':
+        if (!value) return <span className="text-sm text-muted-foreground">無日期時間</span>;
+        // 处理日期类型，将T替换为空格
+        return <span className="text-sm">{String(value).replace('T', ' ')}</span>;
       case 'select':
         if (!value) return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
         const optionIndex = column.options?.indexOf(value) || 0;
@@ -709,12 +713,12 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
                         } else if (column.type === 'date') {
                           return (
                             <div className="space-y-2">
-                              <div className="text-xs text-muted-foreground">日期範圍</div>
+                              <div className="text-xs text-muted-foreground">日期時間範圍</div>
                               <div className="grid grid-cols-2 gap-3">
                                 <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">起始日期</Label>
+                                  <Label className="text-xs text-muted-foreground">起始日期時間</Label>
                                   <Input
-                                    type="date"
+                                    type="datetime-local"
                                     value={filters[`${column.id}_start`] || ''}
                                     onChange={(e) => setFilters(prev => ({
                                       ...prev,
@@ -724,9 +728,9 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
                                   />
                                 </div>
                                 <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">結束日期</Label>
+                                  <Label className="text-xs text-muted-foreground">結束日期時間</Label>
                                   <Input
-                                    type="date"
+                                    type="datetime-local"
                                     value={filters[`${column.id}_end`] || ''}
                                     onChange={(e) => setFilters(prev => ({
                                       ...prev,
@@ -980,7 +984,7 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
                                   placeholder="輸入新值"
                                   type={
                                     column.type === 'number' ? 'number' :
-                                    column.type === 'date' ? 'date' :
+                                    column.type === 'date' ? 'datetime-local' :
                                     column.type === 'email' ? 'email' :
                                     column.type === 'phone' ? 'tel' :
                                     column.type === 'url' ? 'url' : 'text'

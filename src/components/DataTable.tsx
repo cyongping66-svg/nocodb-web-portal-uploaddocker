@@ -826,7 +826,7 @@ export function DataTable({
             className="h-8"
             type={
               column.type === 'number' ? 'number' :
-              column.type === 'date' ? 'date' :
+              column.type === 'date' ? 'datetime-local' :
               column.type === 'email' ? 'email' :
               column.type === 'phone' ? 'tel' :
               column.type === 'url' ? 'url' : 'text'
@@ -897,6 +897,9 @@ export function DataTable({
             </a>
           </div>
         );
+      } else if (column.type === 'date' && value) {
+        // 处理日期类型，将T替换为空格
+        return <span className="text-sm">{String(value).replace('T', ' ')}</span>;
       } else if (column.type === 'select' && column.options) {
         if (value && column.options.includes(value)) {
           // 為選項類型添加顏色標籤
@@ -1091,12 +1094,12 @@ export function DataTable({
                         } else if (column.type === 'date') {
                           return (
                             <div className="space-y-2">
-                              <div className="text-xs text-muted-foreground">日期範圍</div>
+                              <div className="text-xs text-muted-foreground">日期時間範圍</div>
                               <div className="grid grid-cols-2 gap-3">
                                 <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">起始日期</Label>
+                                  <Label className="text-xs text-muted-foreground">起始日期時間</Label>
                                   <Input
-                                    type="date"
+                                    type="datetime-local"
                                     value={filters[`${column.id}_start`] || ''}
                                     onChange={(e) => setFilters(prev => ({
                                       ...prev,
@@ -1106,9 +1109,9 @@ export function DataTable({
                                   />
                                 </div>
                                 <div className="space-y-1">
-                                  <Label className="text-xs text-muted-foreground">結束日期</Label>
+                                  <Label className="text-xs text-muted-foreground">結束日期時間</Label>
                                   <Input
-                                    type="date"
+                                    type="datetime-local"
                                     value={filters[`${column.id}_end`] || ''}
                                     onChange={(e) => setFilters(prev => ({
                                       ...prev,
@@ -1373,7 +1376,7 @@ export function DataTable({
                                   placeholder="輸入新值"
                                   type={
                                     column.type === 'number' ? 'number' :
-                                    column.type === 'date' ? 'date' :
+                                    column.type === 'date' ? 'datetime-local' :
                                     column.type === 'email' ? 'email' :
                                     column.type === 'phone' ? 'tel' :
                                     column.type === 'url' ? 'url' : 'text'
