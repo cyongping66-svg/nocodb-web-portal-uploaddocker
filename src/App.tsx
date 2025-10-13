@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { useTables } from '@/hooks/use-tables';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -116,20 +117,43 @@ function App() {
   const exportData = () => {
     if (!activeTable) return;
     
-    const dataStr = JSON.stringify({
-      tableName: activeTable.name,
-      columns: activeTable.columns,
-      rows: activeTable.rows
-    }, null, 2);
-    
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${activeTable.name.toLowerCase().replace(/\s+/g, '-')}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-    toast.success('資料匯出成功');
+    try {
+      // 准备Excel导出数据
+      const worksheetData = [
+        // 表头行
+        activeTable.columns.map(col => col.name),
+        // 数据行
+        ...activeTable.rows.map(row => 
+          activeTable.columns.map(col => {
+            const value = row[col.id];
+            // 处理不同类型的数据
+            if (col.type === 'date' && value) {
+              return new Date(value); // 确保日期格式正确
+            }
+            if (col.type === 'boolean') {
+              return value ? '是' : '否';
+            }
+            if (col.type === 'file' && value) {
+              return value.name || '文件';
+            }
+            return value || '';
+          })
+        )
+      ];
+
+      // 创建工作簿和工作表
+      const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, activeTable.name);
+
+      // 导出Excel文件
+      const fileName = `${activeTable.name.toLowerCase().replace(/\s+/g, '-')}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+      toast.success('資料以Excel格式匯出成功');
+    } catch (error) {
+      console.error('Excel导出失败:', error);
+      toast.error('Excel導出失敗，請重試');
+    }
   };
 
   return (

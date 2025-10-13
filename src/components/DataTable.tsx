@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -577,23 +578,44 @@ export function DataTable({
     }
 
     const selectedRowsData = table.rows.filter(row => selectedRows.has(row.id));
-    const exportData = {
-      tableName: table.name,
-      columns: table.columns,
-      rows: selectedRowsData,
-      exportedAt: new Date().toISOString(),
-      totalRows: selectedRowsData.length
-    };
+    
+    try {
+      // 准备Excel导出数据
+      const worksheetData = [
+        // 表头行
+        table.columns.map(col => col.name),
+        // 数据行
+        ...selectedRowsData.map(row => 
+          table.columns.map(col => {
+            const value = row[col.id];
+            // 处理不同类型的数据
+            if (col.type === 'date' && value) {
+              return new Date(value); // 确保日期格式正确
+            }
+            if (col.type === 'boolean') {
+              return value ? '是' : '否';
+            }
+            if (col.type === 'file' && value) {
+              return value.name || '文件';
+            }
+            return value || '';
+          })
+        )
+      ];
 
-    const dataStr = JSON.stringify(exportData, null, 2);
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${table.name}-selected-${new Date().toISOString().split('T')[0]}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-    toast.success(`已匯出 ${selectedRows.size} 筆資料`);
+      // 创建工作簿和工作表
+      const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, `${table.name} (已选择)`);
+
+      // 导出Excel文件
+      const fileName = `${table.name.toLowerCase().replace(/\s+/g, '-')}-selected-${Date.now()}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+      toast.success(`成功导出 ${selectedRows.size} 行数据为Excel文件`);
+    } catch (error) {
+      console.error('Excel批量导出失败:', error);
+      toast.error('Excel批量導出失敗，請重試');
+    }
   };
 
   const batchDuplicate = () => {
@@ -815,7 +837,7 @@ export function DataTable({
       }
     }
 
-    // Display logic for different column types
+    // /显示不同列类型的逻辑
     const renderCellContent = () => {
       if (column.type === 'boolean') {
         return <Checkbox checked={Boolean(value)} disabled />;
@@ -950,6 +972,7 @@ export function DataTable({
                   )}
                 </Button>
               </DialogTrigger>
+              {/* 篩選按鈕裡的進階篩選功能 */}
             <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
               <DialogHeader className="flex-shrink-0">
                 <DialogTitle className="flex items-center gap-2">

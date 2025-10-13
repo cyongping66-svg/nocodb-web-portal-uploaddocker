@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -217,23 +218,44 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
     }
 
     const selectedRowsData = table.rows.filter(row => selectedRows.has(row.id));
-    const exportData = {
-      tableName: table.name,
-      columns: table.columns,
-      rows: selectedRowsData,
-      exportedAt: new Date().toISOString(),
-      totalRows: selectedRowsData.length
-    };
+    
+    try {
+      // 准备Excel导出数据
+      const worksheetData = [
+        // 表头行
+        table.columns.map(col => col.name),
+        // 数据行
+        ...selectedRowsData.map(row => 
+          table.columns.map(col => {
+            const value = row[col.id];
+            // 处理不同类型的数据
+            if (col.type === 'date' && value) {
+              return new Date(value); // 确保日期格式正确
+            }
+            if (col.type === 'boolean') {
+              return value ? '是' : '否';
+            }
+            if (col.type === 'file' && value) {
+              return value.name || '文件';
+            }
+            return value || '';
+          })
+        )
+      ];
 
-    const dataStr = JSON.stringify(exportData, null, 2);
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${table.name}-selected-${new Date().toISOString().split('T')[0]}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-    toast.success(`已匯出 ${selectedRows.size} 筆資料`);
+      // 创建工作簿和工作表
+      const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, `${table.name} (已选择)`);
+
+      // 导出Excel文件
+      const fileName = `${table.name.toLowerCase().replace(/\s+/g, '-')}-selected-${Date.now()}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+      toast.success(`成功导出 ${selectedRows.size} 行数据为Excel文件`);
+    } catch (error) {
+      console.error('Excel批量导出失败:', error);
+      toast.error('Excel批量導出失敗，請重試');
+    }
   };
 
   const batchDuplicate = () => {
@@ -337,22 +359,19 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
     switch (column.type) {
       case 'boolean':
         return (
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id={inputId}
-              checked={Boolean(value)}
-              onCheckedChange={onChange}
-            />
-            <Label htmlFor={inputId}>{column.name}</Label>
-          </div>
+          <Checkbox
+            id={inputId}
+            checked={Boolean(value)}
+            onCheckedChange={onChange}
+            className="h-4 w-4"
+          />
         );
       case 'select':
         return (
-          <div className="space-y-2">
-            <Label htmlFor={inputId}>{column.name}</Label>
+          <div className="w-full">
             <Select value={String(value || '')} onValueChange={onChange}>
-              <SelectTrigger>
-                <SelectValue placeholder={`選擇${column.name.toLowerCase()}`} />
+              <SelectTrigger className="h-8 w-full">
+                <SelectValue placeholder="請選擇選項" />
               </SelectTrigger>
               <SelectContent>
                 {column.options?.map((option: string, index: number) => (
@@ -367,35 +386,9 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
             </Select>
           </div>
         );
-      case 'number':
-        return (
-          <div className="space-y-2">
-            <Label htmlFor={inputId}>{column.name}</Label>
-            <Input
-              id={inputId}
-              type="number"
-              value={value || ''}
-              onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-              placeholder={`輸入${column.name.toLowerCase()}`}
-            />
-          </div>
-        );
-      case 'date':
-        return (
-          <div className="space-y-2">
-            <Label htmlFor={inputId}>{column.name}</Label>
-            <Input
-              id={inputId}
-              type="date"
-              value={value || ''}
-              onChange={(e) => onChange(e.target.value)}
-            />
-          </div>
-        );
       case 'file':
         return (
-          <div className="space-y-2">
-            <Label htmlFor={inputId}>{column.name}</Label>
+          <div className="w-full">
             <Input
               id={inputId}
               type="file"
@@ -405,64 +398,78 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
                   handleFileUpload(file, onChange);
                 }
               }}
+              className="h-8"
             />
             {value && (
-              <div className="text-sm text-muted-foreground">
+              <div className="text-xs text-muted-foreground mt-1">
                 已選擇: {value.name}
               </div>
             )}
           </div>
         );
+      case 'number':
+        return (
+          <Input
+            id={inputId}
+            type="number"
+            value={value || ''}
+            onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+            placeholder={`輸入數值`}
+            className="h-8"
+          />
+        );
+      case 'date':
+        return (
+          <Input
+            id={inputId}
+            type="date"
+            value={value || ''}
+            onChange={(e) => onChange(e.target.value)}
+            className="h-8"
+          />
+        );
       case 'url':
         return (
-          <div className="space-y-2">
-            <Label htmlFor={inputId}>{column.name}</Label>
-            <Input
-              id={inputId}
-              type="url"
-              value={value || ''}
-              onChange={(e) => onChange(e.target.value)}
-              placeholder="https://example.com"
-            />
-          </div>
+          <Input
+            id={inputId}
+            type="url"
+            value={value || ''}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="https://example.com"
+            className="h-8"
+          />
         );
       case 'email':
         return (
-          <div className="space-y-2">
-            <Label htmlFor={inputId}>{column.name}</Label>
-            <Input
-              id={inputId}
-              type="email"
-              value={value || ''}
-              onChange={(e) => onChange(e.target.value)}
-              placeholder="example@email.com"
-            />
-          </div>
+          <Input
+            id={inputId}
+            type="email"
+            value={value || ''}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="example@email.com"
+            className="h-8"
+          />
         );
       case 'phone':
         return (
-          <div className="space-y-2">
-            <Label htmlFor={inputId}>{column.name}</Label>
-            <Input
-              id={inputId}
-              type="tel"
-              value={value || ''}
-              onChange={(e) => onChange(e.target.value)}
-              placeholder="0912-345-678"
-            />
-          </div>
+          <Input
+            id={inputId}
+            type="tel"
+            value={value || ''}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="0912-345-678"
+            className="h-8"
+          />
         );
       default:
         return (
-          <div className="space-y-2">
-            <Label htmlFor={inputId}>{column.name}</Label>
-            <Input
-              id={inputId}
-              value={value || ''}
-              onChange={(e) => onChange(e.target.value)}
-              placeholder={`輸入${column.name.toLowerCase()}`}
-            />
-          </div>
+          <Input
+            id={inputId}
+            value={value || ''}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={`輸入內容`}
+            className="h-8"
+          />
         );
     }
   };
@@ -471,10 +478,7 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
     switch (column.type) {
       case 'boolean':
         return (
-          <div className="flex items-center space-x-2">
-            <Checkbox checked={Boolean(value)} disabled />
-            <span className="text-sm">{Boolean(value) ? '是' : '否'}</span>
-          </div>
+          <Checkbox checked={Boolean(value)} disabled />
         );
       case 'file':
         if (!value) return <span className="text-sm text-muted-foreground">無檔案</span>;
@@ -485,7 +489,7 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
               href={value.url} 
               target="_blank" 
               rel="noopener noreferrer"
-              className="text-blue-600 hover:text-blue-800 underline"
+              className="text-blue-600 hover:text-blue-800 underline truncate max-w-[150px]"
             >
               {value.name}
             </a>
@@ -500,7 +504,7 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
               href={value.startsWith('http') ? value : `https://${value}`}
               target="_blank" 
               rel="noopener noreferrer"
-              className="text-blue-600 hover:text-blue-800 underline"
+              className="text-blue-600 hover:text-blue-800 underline truncate max-w-[150px]"
             >
               {value}
             </a>
@@ -533,7 +537,7 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
           </div>
         );
       case 'select':
-        if (!value) return <span className="text-sm text-muted-foreground">無選項</span>;
+        if (!value) return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
         const optionIndex = column.options?.indexOf(value) || 0;
         const colorClass = getOptionColor(value, optionIndex);
         
@@ -550,22 +554,22 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
   return (
     <div className="space-y-4">
       {/* 搜尋和篩選區域 */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-3">
+      <div className="bg-muted/30 rounded-lg p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           {/* 搜尋框 */}
-          <div className="relative flex-1 max-w-sm">
+          <div className="relative flex-1 max-w-md sm:max-w-xl" style={{ minWidth: '200px' }}>
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="搜尋所有欄位..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9"
+              className="pl-9 pr-8 h-10 bg-background"
             />
             {searchTerm && (
               <Button
                 variant="ghost"
                 size="sm"
-                className="absolute right-1 top-1/2 transform -translate-y-1/2 p-1 h-auto"
+                className="absolute right-1 top-1/2 transform -translate-y-1/2 p-1 h-auto hover:bg-muted"
                 onClick={() => setSearchTerm('')}
               >
                 <X className="w-3 h-3" />
@@ -586,137 +590,200 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
                 )}
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>進階篩選</DialogTitle>
+            {/* 篩選按鈕裡的進階篩選功能 */}
+             <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+              <DialogHeader className="flex-shrink-0">
+                <DialogTitle className="flex items-center gap-2">
+                  <Filter className="w-5 h-5 text-primary" />
+                  進階篩選
+                </DialogTitle>
               </DialogHeader>
-              <div className="space-y-4 max-h-96 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto px-1">
+                <div className="space-y-6 py-4">
                 {table.columns.map((column) => (
-                  <div key={column.id}>
-                    <Label htmlFor={`filter-${column.id}`}>{column.name}</Label>
-                    {(() => {
-                      // 根據欄位類型提供不同的篩選控制項
-                      if (column.type === 'boolean') {
-                        return (
-                          <Select 
-                            value={filters[column.id] || '__all__'} 
-                            onValueChange={(value) => setFilters(prev => ({
-                              ...prev,
-                              [column.id]: value === '__all__' ? '' : value
-                            }))}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="選擇布林值" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__all__">全部</SelectItem>
-                              <SelectItem value="true">是</SelectItem>
-                              <SelectItem value="false">否</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        );
-                      } else if (column.type === 'select' && column.options) {
-                        return (
-                          <Select 
-                            value={filters[column.id] || '__all__'} 
-                            onValueChange={(value) => setFilters(prev => ({
-                              ...prev,
-                              [column.id]: value === '__all__' ? '' : value
-                            }))}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="選擇選項" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__all__">全部</SelectItem>
-                              {column.options.map((option, index) => (
-                                <SelectItem key={option} value={option}>
+                  <div key={column.id} className="space-y-2">
+                    <Label htmlFor={`filter-${column.id}`} className="text-sm font-medium text-foreground">
+                      {column.name}
+                    </Label>
+                    <div className="space-y-2">
+                      {(() => {
+                        // 根據欄位類型提供不同的篩選控制項
+                        if (column.type === 'boolean') {
+                          return (
+                            <Select 
+                              value={filters[column.id] || '__all__'} 
+                              onValueChange={(value) => setFilters(prev => ({
+                                ...prev,
+                                [column.id]: value === '__all__' ? '' : value
+                              }))}
+                            >
+                              <SelectTrigger className="h-10">
+                                <SelectValue placeholder="選擇布林值" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__all__">
                                   <div className="flex items-center gap-2">
-                                    <div className={`w-3 h-3 rounded-full border ${getOptionColor(option, index)}`} />
-                                    {option}
+                                    <div className="w-2 h-2 rounded-full bg-muted border" />
+                                    全部
                                   </div>
                                 </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        );
-                      } else if (column.type === 'number') {
-                        return (
-                          <div className="flex gap-2">
-                            <Input
-                              type="number"
-                              placeholder="最小值"
-                              value={filters[`${column.id}_min`] || ''}
-                              onChange={(e) => setFilters(prev => ({
+                                <SelectItem value="true">
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-green-500" />
+                                    是
+                                  </div>
+                                </SelectItem>
+                                <SelectItem value="false">
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                                    否
+                                  </div>
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                          );
+                        } else if (column.type === 'select' && column.options) {
+                          return (
+                            <Select 
+                              value={filters[column.id] || '__all__'} 
+                              onValueChange={(value) => setFilters(prev => ({
                                 ...prev,
-                                [`${column.id}_min`]: e.target.value
+                                [column.id]: value === '__all__' ? '' : value
                               }))}
-                              className="flex-1"
-                            />
-                            <Input
-                              type="number" 
-                              placeholder="最大值"
-                              value={filters[`${column.id}_max`] || ''}
-                              onChange={(e) => setFilters(prev => ({
-                                ...prev,
-                                [`${column.id}_max`]: e.target.value
-                              }))}
-                              className="flex-1"
-                            />
-                          </div>
-                        );
-                      } else if (column.type === 'date') {
-                        return (
-                          <div className="flex gap-2">
-                            <Input
-                              type="date"
-                              placeholder="起始日期"
-                              value={filters[`${column.id}_start`] || ''}
-                              onChange={(e) => setFilters(prev => ({
-                                ...prev,
-                                [`${column.id}_start`]: e.target.value
-                              }))}
-                              className="flex-1"
-                            />
-                            <Input
-                              type="date"
-                              placeholder="結束日期"
-                              value={filters[`${column.id}_end`] || ''}
-                              onChange={(e) => setFilters(prev => ({
-                                ...prev,
-                                [`${column.id}_end`]: e.target.value
-                              }))}
-                              className="flex-1"
-                            />
-                          </div>
-                        );
-                      } else {
-                        // 預設為文字搜尋（適用於 text, email, phone, url, file）
-                        return (
-                          <Input
-                            id={`filter-${column.id}`}
-                            placeholder={`篩選 ${column.name}...`}
-                            value={filters[column.id] || ''}
-                            onChange={(e) => setFilters(prev => ({
-                              ...prev,
-                              [column.id]: e.target.value
-                            }))}
-                            type={
-                              column.type === 'email' ? 'email' :
-                              column.type === 'phone' ? 'tel' :
-                              column.type === 'url' ? 'url' : 'text'
-                            }
-                          />
-                        );
-                      }
-                    })()}
+                            >
+                              <SelectTrigger className="h-10">
+                                <SelectValue placeholder="選擇選項" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__all__">
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-3 h-3 rounded border bg-muted" />
+                                    全部
+                                  </div>
+                                </SelectItem>
+                                {column.options.map((option, index) => (
+                                  <SelectItem key={option} value={option}>
+                                    <div className="flex items-center gap-2">
+                                      <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
+                                      {option}
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          );
+                        } else if (column.type === 'number') {
+                          return (
+                            <div className="space-y-2">
+                              <div className="text-xs text-muted-foreground">數值範圍</div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">最小值</Label>
+                                  <Input
+                                    type="number"
+                                    placeholder="0"
+                                    value={filters[`${column.id}_min`] || ''}
+                                    onChange={(e) => setFilters(prev => ({
+                                      ...prev,
+                                      [`${column.id}_min`]: e.target.value
+                                    }))}
+                                    className="h-10"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">最大值</Label>
+                                  <Input
+                                    type="number" 
+                                    placeholder="999"
+                                    value={filters[`${column.id}_max`] || ''}
+                                    onChange={(e) => setFilters(prev => ({
+                                      ...prev,
+                                      [`${column.id}_max`]: e.target.value
+                                    }))}
+                                    className="h-10"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        } else if (column.type === 'date') {
+                          return (
+                            <div className="space-y-2">
+                              <div className="text-xs text-muted-foreground">日期範圍</div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">起始日期</Label>
+                                  <Input
+                                    type="date"
+                                    value={filters[`${column.id}_start`] || ''}
+                                    onChange={(e) => setFilters(prev => ({
+                                      ...prev,
+                                      [`${column.id}_start`]: e.target.value
+                                    }))}
+                                    className="h-10"
+                                  />
+                                </div>
+                                <div className="space-y-1">
+                                  <Label className="text-xs text-muted-foreground">結束日期</Label>
+                                  <Input
+                                    type="date"
+                                    value={filters[`${column.id}_end`] || ''}
+                                    onChange={(e) => setFilters(prev => ({
+                                      ...prev,
+                                      [`${column.id}_end`]: e.target.value
+                                    }))}
+                                    className="h-10"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        } else {
+                          // 預設為文字搜尋（適用於 text, email, phone, url, file）
+                          return (
+                            <div className="space-y-1">
+                              <Input
+                                id={`filter-${column.id}`}
+                                placeholder={`搜尋 ${column.name}...`}
+                                value={filters[column.id] || ''}
+                                onChange={(e) => setFilters(prev => ({
+                                  ...prev,
+                                  [column.id]: e.target.value
+                                }))}
+                                type={
+                                  column.type === 'email' ? 'email' :
+                                  column.type === 'phone' ? 'tel' :
+                                  column.type === 'url' ? 'url' : 'text'
+                                }
+                                className="h-10"
+                              />
+                            </div>
+                          );
+                        }
+                      })()}
+                    </div>
                   </div>
                 ))}
-                <div className="flex gap-2 pt-2">
-                  <Button onClick={clearFilters} variant="outline" className="flex-1">
+                </div>
+              </div>
+              
+              {/* 底部按鈕區域 - 固定在底部 */}
+              <div className="flex-shrink-0 border-t border-border p-4">
+                <div className="flex gap-3">
+                  <Button 
+                    onClick={clearFilters} 
+                    variant="outline" 
+                    className="flex-1 h-11"
+                    disabled={Object.values(filters).every(v => !v)}
+                  >
+                    <X className="w-4 h-4 mr-2" />
                     清除篩選
                   </Button>
-                  <Button onClick={() => setIsFilterOpen(false)} className="flex-1">
+                  <Button 
+                    onClick={() => setIsFilterOpen(false)} 
+                    className="flex-1 h-11"
+                  >
+                    <CheckSquare className="w-4 h-4 mr-2" />
                     套用篩選
                   </Button>
                 </div>
@@ -968,14 +1035,14 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
         <div className="flex items-center gap-2">
           <Dialog open={isAddRowOpen} onOpenChange={setIsAddRowOpen}>
             <DialogTrigger asChild>
-              <Button>
+              <Button size="sm">
                 <Plus className="w-4 h-4 mr-2" />
-                新增行
+                新增卡片
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>新增行</DialogTitle>
+                <DialogTitle>新增卡片</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
                 {table.columns.map((column) => (
@@ -989,7 +1056,7 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
                 ))}
                 <div className="flex gap-2 pt-4">
                   <Button onClick={addNewRow} className="flex-1">
-                    新增行
+                    新增卡片
                   </Button>
                   <Button variant="outline" onClick={() => setIsAddRowOpen(false)} className="flex-1">
                     取消
@@ -1040,13 +1107,13 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
       ) : filteredRows.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center">
-            <p className="text-muted-foreground">尚無資料。點擊「新增行」開始輸入資料。</p>
+            <p className="text-muted-foreground">尚無資料。點擊「新增卡片」開始輸入資料。</p>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+        <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 auto-cols-fr">
           {filteredRows.map((row) => (
-            <Card key={row.id} className={`relative group transition-all ${selectedRows.has(row.id) ? 'ring-2 ring-primary bg-primary/5' : ''}`}>
+            <Card key={row.id} className={`relative group transition-all w-full max-w-md ${selectedRows.has(row.id) ? 'ring-2 ring-primary bg-primary/5' : ''}`}>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 flex-1">
@@ -1096,23 +1163,29 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
-                {table.columns.slice(1).map((column) => (
-                  <div key={column.id} className="space-y-1">
-                    <Label className="text-xs font-medium text-muted-foreground">
-                      {column.name}
-                    </Label>
-                    {editingRow === row.id ? (
-                      renderFieldInput(
-                        column,
-                        editValues[column.id],
-                        (value) => setEditValues({ ...editValues, [column.id]: value }),
-                        true
-                      )
-                    ) : (
-                      renderFieldDisplay(column, row[column.id])
-                    )}
-                  </div>
-                ))}
+                <div className="space-y-3 overflow-hidden">
+                  {table.columns.slice(1).map((column) => (
+                    <div key={column.id} className="space-y-1">
+                      <Label className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+                        {column.name}
+                      </Label>
+                      <div className="overflow-hidden">
+                        {editingRow === row.id ? (
+                          renderFieldInput(
+                            column,
+                            editValues[column.id],
+                            (value) => setEditValues({ ...editValues, [column.id]: value }),
+                            true
+                          )
+                        ) : (
+                          <div className="overflow-hidden">
+                            {renderFieldDisplay(column, row[column.id])}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             </Card>
           ))}
