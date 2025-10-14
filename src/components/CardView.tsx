@@ -367,25 +367,65 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
           />
         );
       case 'select':
-        return (
-          <div className="w-full">
-            <Select value={String(value || '')} onValueChange={onChange}>
-              <SelectTrigger className="h-8 w-full">
-                <SelectValue placeholder="請選擇選項" />
-              </SelectTrigger>
-              <SelectContent>
+        // 检查是否为多选模式
+        if (column.isMultiSelect) {
+          // 多选模式
+          const selectedValues = value ? (Array.isArray(value) ? value : [value]) : [];
+          
+          return (
+            <div className="w-full">
+              <div className="flex flex-col gap-2">
                 {column.options?.map((option: string, index: number) => (
-                  <SelectItem key={option} value={option}>
+                  <div 
+                    key={option} 
+                    className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors ${selectedValues.includes(option) ? 'bg-primary/10 border-primary/20' : 'hover:bg-muted'}`}
+                    onClick={() => {
+                      let newSelectedValues: string[];
+                      if (selectedValues.includes(option)) {
+                        // 取消选择
+                        newSelectedValues = selectedValues.filter(val => val !== option);
+                      } else {
+                        // 添加选择
+                        newSelectedValues = [...selectedValues, option];
+                      }
+                      onChange(newSelectedValues);
+                    }}
+                  >
+                    <Checkbox 
+                      checked={selectedValues.includes(option)}
+                      className="transition-all"
+                    />
                     <div className="flex items-center gap-2">
                       <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
                       {option}
                     </div>
-                  </SelectItem>
+                  </div>
                 ))}
-              </SelectContent>
-            </Select>
-          </div>
-        );
+              </div>
+            </div>
+          );
+        } else {
+          // 单选模式
+          return (
+            <div className="w-full">
+              <Select value={String(value || '')} onValueChange={onChange}>
+                <SelectTrigger className="h-8 w-full">
+                  <SelectValue placeholder="請選擇選項" />
+                </SelectTrigger>
+                <SelectContent>
+                  {column.options?.map((option: string, index: number) => (
+                    <SelectItem key={option} value={option}>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
+                        {option}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          );
+        }
       case 'file':
         return (
           <div className="w-full">
@@ -542,14 +582,38 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
         return <span className="text-sm">{String(value).replace('T', ' ')}</span>;
       case 'select':
         if (!value) return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
-        const optionIndex = column.options?.indexOf(value) || 0;
-        const colorClass = getOptionColor(value, optionIndex);
         
-        return (
-          <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
-            {value}
-          </span>
-        );
+        // 处理多选模式
+        if (column.isMultiSelect && Array.isArray(value)) {
+          if (value.length === 0) return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
+          
+          return (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {value.map((selectedValue, i) => {
+                const optionIndex = column.options?.indexOf(selectedValue) || 0;
+                const colorClass = getOptionColor(selectedValue, optionIndex);
+                return (
+                  <span 
+                    key={`${selectedValue}-${i}`} 
+                    className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}
+                  >
+                    {selectedValue}
+                  </span>
+                );
+              })}
+            </div>
+          );
+        } else {
+          // 单选模式
+          const optionIndex = column.options?.indexOf(value) || 0;
+          const colorClass = getOptionColor(value, optionIndex);
+          
+          return (
+            <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
+              {value}
+            </span>
+          );
+        }
       default:
         return <span className="text-sm">{String(value || '')}</span>;
     }

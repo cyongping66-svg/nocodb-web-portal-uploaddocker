@@ -143,8 +143,9 @@ function SortableHeader({ column, sortConfig, onSort, onDelete, onUpdateColumn, 
           
           {isEditing ? (
             <Input
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
+                // 添加空值检查，修复类型错误
+                value={editValue || ''}
+                onChange={(e) => setEditValue(e.target.value)}
               onBlur={handleSaveEdit}
               onKeyDown={handleKeyDown}
               className="h-7 text-sm font-medium"
@@ -236,10 +237,12 @@ export function DataTable({
   onDeleteRow 
 }: DataTableProps) {
   const [editingCell, setEditingCell] = useState<{ rowId: string; columnId: string } | null>(null);
-  const [editValue, setEditValue] = useState('');
+  // 修改editValue类型以支持string或string[]，适应单选和多选模式
+  const [editValue, setEditValue] = useState<string | string[] | null>('');
   const [selectOpen, setSelectOpen] = useState(false);
   const [isAddColumnOpen, setIsAddColumnOpen] = useState(false);
-  const [newColumn, setNewColumn] = useState({ name: '', type: 'text' as Column['type'], options: [''] });
+  // 为newColumn添加isMultiSelect属性的支持
+  const [newColumn, setNewColumn] = useState({ name: '', type: 'text' as Column['type'], options: [''], isMultiSelect: false });
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState<{ [columnId: string]: string }>({});
@@ -330,7 +333,9 @@ export function DataTable({
       id: Date.now().toString(),
       name: newColumn.name.trim(),
       type: newColumn.type,
-      options: newColumn.type === 'select' ? newColumn.options.filter(opt => opt.trim()) : undefined
+      options: newColumn.type === 'select' ? newColumn.options.filter(opt => opt.trim()) : undefined,
+      // 添加isMultiSelect属性
+      isMultiSelect: newColumn.type === 'select' ? newColumn.isMultiSelect : undefined
     };
 
     onUpdateTable({
@@ -338,7 +343,8 @@ export function DataTable({
       columns: [...table.columns, column]
     });
 
-    setNewColumn({ name: '', type: 'text', options: [''] });
+    // 添加isMultiSelect属性，修复类型错误
+    setNewColumn({ name: '', type: 'text', options: [''], isMultiSelect: false });
     setIsAddColumnOpen(false);
     toast.success('欄位新增成功');
   };
@@ -435,7 +441,8 @@ export function DataTable({
 
     let processedValue: any = editValue;
     if (column.type === 'number') {
-      processedValue = parseFloat(editValue) || 0;
+      // 添加空值检查，修复类型错误
+      processedValue = editValue !== null ? parseFloat(editValue as string) || 0 : 0;
     } else if (column.type === 'boolean') {
       processedValue = editValue === 'true';
     }
@@ -761,43 +768,102 @@ export function DataTable({
           />
         );
       } else if (column.type === 'select' && column.options) {
-        return (
-          <div className="w-full" onClick={(e) => e.stopPropagation()}>
-            <Select 
-              value={editValue || ''} 
-              open={selectOpen}
-              onOpenChange={setSelectOpen}
-              onValueChange={(val) => {
-                setEditValue(val);
-                // 立即更新數據並結束編輯
-                const updatedRows: Row[] = table.rows.map(row =>
-                  row.id === editingCell?.rowId
-                    ? { ...row, [editingCell.columnId]: val }
-                    : row
-                );
-                onUpdateTable({ ...table, rows: updatedRows });
-                setEditingCell(null);
-                setEditValue('');
-                setSelectOpen(false);
-                toast.success('選項已更新');
-              }}
-            >
-              <SelectTrigger className="h-8 w-full">
-                <SelectValue placeholder="請選擇選項" />
-              </SelectTrigger>
-              <SelectContent>
+        // 检查是否为多选模式
+        if (column.isMultiSelect) {
+          // 多选模式
+          const selectedValues = editValue ? (Array.isArray(editValue) ? editValue : [editValue]) : [];
+          
+          return (
+            <div className="w-full" onClick={(e) => e.stopPropagation()}>
+              <div className="flex flex-col gap-2">
                 {column.options.map((option, index) => (
-                  <SelectItem key={option} value={option}>
+                  <div 
+                    key={option} 
+                    className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors ${selectedValues.includes(option) ? 'bg-primary/10 border-primary/20' : 'hover:bg-muted'}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      let newSelectedValues: string[];
+                      if (selectedValues.includes(option)) {
+                        // 取消选择
+                        newSelectedValues = selectedValues.filter(val => val !== option);
+                      } else {
+                        // 添加选择
+                        newSelectedValues = [...selectedValues, option];
+                      }
+                      setEditValue(newSelectedValues);
+                    }}
+                  >
+                    <Checkbox 
+                      checked={selectedValues.includes(option)}
+                      className="transition-all"
+                    />
                     <div className="flex items-center gap-2">
                       <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
                       {option}
                     </div>
-                  </SelectItem>
+                  </div>
                 ))}
-              </SelectContent>
-            </Select>
-          </div>
-        );
+                <Button 
+                  variant="default" 
+                  size="sm" 
+                  className="mt-2 h-8"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    // 立即更新數據並結束編輯
+                    const updatedRows: Row[] = table.rows.map(row =>
+                      row.id === editingCell?.rowId
+                        ? { ...row, [editingCell.columnId]: editValue || [] }
+                        : row
+                    );
+                    onUpdateTable({ ...table, rows: updatedRows });
+                    setEditingCell(null);
+                    setEditValue('');
+                    toast.success('選項已更新');
+                  }}
+                >
+                  確認
+                </Button>
+              </div>
+            </div>
+          );
+        } else {
+          // 单选模式
+          return (
+            <div className="w-full" onClick={(e) => e.stopPropagation()}>
+              <Select 
+                // 确保值是字符串类型，修复类型错误
+                value={typeof editValue === 'string' ? editValue : ''} 
+                onValueChange={(val) => {
+                  setEditValue(val);
+                  // 立即更新數據並結束編輯
+                  const updatedRows: Row[] = table.rows.map(row =>
+                    row.id === editingCell?.rowId
+                      ? { ...row, [editingCell.columnId]: val }
+                      : row
+                  );
+                  onUpdateTable({ ...table, rows: updatedRows });
+                  setEditingCell(null);
+                  setEditValue('');
+                  toast.success('選項已更新');
+                }}
+              >
+                <SelectTrigger className="h-8 w-full" onClick={(e) => e.stopPropagation()}>
+                  <SelectValue placeholder="請選擇選項" />
+                </SelectTrigger>
+                <SelectContent onClick={(e) => e.stopPropagation()}>
+                  {column.options.map((option, index) => (
+                    <SelectItem key={option} value={option} onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
+                        {option}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          );
+        }
       } else if (column.type === 'file') {
         return (
           <Input
@@ -816,7 +882,8 @@ export function DataTable({
       } else {
         return (
           <Input
-            value={editValue}
+            // 添加空值检查，修复类型错误
+            value={editValue || ''}
             onChange={(e) => setEditValue(e.target.value)}
             onBlur={saveEdit}
             onKeyDown={(e) => {
@@ -901,19 +968,52 @@ export function DataTable({
         // 处理日期类型，将T替换为空格
         return <span className="text-sm">{String(value).replace('T', ' ')}</span>;
       } else if (column.type === 'select' && column.options) {
-        if (value && column.options.includes(value)) {
-          // 為選項類型添加顏色標籤
-          const optionIndex = column.options.indexOf(value);
-          const colorClass = getOptionColor(value, optionIndex);
+        // 检查是否为多选模式
+        if (column.isMultiSelect) {
+          // 多选模式
+          const selectedValues = Array.isArray(value) ? value : value ? [value] : [];
           
-          return (
-            <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
-              {value}
-            </span>
-          );
+          if (selectedValues.length > 0) {
+            return (
+              <div className="flex flex-wrap gap-1">
+                {selectedValues.map((selectedValue) => {
+                  if (column.options?.includes(selectedValue)) {
+                    const optionIndex = column.options.indexOf(selectedValue);
+                    const colorClass = getOptionColor(selectedValue, optionIndex);
+                    
+                    return (
+                      <span 
+                        key={selectedValue} 
+                        className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}
+                      >
+                        {selectedValue}
+                      </span>
+                    );
+                  }
+                  return null;
+                })}
+              </div>
+            );
+          } else {
+            // 如果没有选中值，显示占位符
+            return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
+          }
         } else {
-          // 如果没有值或值不在选项中，显示占位符
-          return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
+          // 单选模式
+          if (value && column.options.includes(value)) {
+            // 為選項類型添加顏色標籤
+            const optionIndex = column.options.indexOf(value);
+            const colorClass = getOptionColor(value, optionIndex);
+            
+            return (
+              <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
+                {value}
+              </span>
+            );
+          } else {
+            // 如果没有值或值不在选项中，显示占位符
+            return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
+          }
         }
       } else {
         return <span className="text-sm">{String(value || '')}</span>;
@@ -1477,6 +1577,20 @@ export function DataTable({
                 {newColumn.type === 'select' && (
                   <div>
                     <Label>選項</Label>
+                    {/* 添加多选模式复选框 */}
+                    <div className="flex items-center gap-2 mt-2">
+                      <Checkbox 
+                        id="is-multi-select"
+                        checked={newColumn.isMultiSelect || false}
+                        // 确保checked是布尔类型，修复类型错误
+                        onCheckedChange={(checked) => 
+                          setNewColumn({ ...newColumn, isMultiSelect: !!checked })
+                        }
+                      />
+                      <Label htmlFor="is-multi-select" className="cursor-pointer">
+                        啟用多選模式
+                      </Label>
+                    </div>
                     {newColumn.options.map((option, index) => (
                       <div key={index} className="flex gap-2 mt-2">
                         <Input
