@@ -192,7 +192,7 @@ function App() {
               {/* 顯示藍色小球 */}
               <div className="w-2 h-2 rounded-full bg-blue-500"></div>
               <span className="text-xs text-muted-foreground">
-                版本信息: v1.1.0
+                版本信息: v1.0
               </span>
             </div>
           </div>
