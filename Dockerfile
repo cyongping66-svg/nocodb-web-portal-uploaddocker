@@ -11,7 +11,7 @@ RUN apk update && apk upgrade openssl libxml2
 COPY package*.json ./
 
 # 安裝依賴 - 使用npm install替代npm ci以解决依赖同步问题
-RUN npm install
+RUN npm ci
 
 # 複製源代碼
 COPY . .
