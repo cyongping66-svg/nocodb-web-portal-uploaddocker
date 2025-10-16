@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -61,7 +61,22 @@ interface CardViewProps {
   onUpdateTable: (table: Table) => void;
 }
 
-export function CardView({ table, onUpdateTable }: CardViewProps) {
+export function CardView({ table, onUpdateTable: originalOnUpdateTable }: CardViewProps) {
+  // 存储表格ID用于localStorage的键名
+  const tableStorageKey = `table_data_${table.id || 'default'}`;
+  
+  // 包装onUpdateTable函数以添加持久化逻辑
+  const onUpdateTable = (updatedTable: Table) => {
+    // 保存到localStorage
+    try {
+      localStorage.setItem(tableStorageKey, JSON.stringify(updatedTable));
+    } catch (error) {
+      console.error('Failed to save table data to localStorage:', error);
+    }
+    // 调用原始的onUpdateTable函数
+    originalOnUpdateTable(updatedTable);
+  };
+  
   const [editingRow, setEditingRow] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Record<string, any>>({});
   const [isAddRowOpen, setIsAddRowOpen] = useState(false);
