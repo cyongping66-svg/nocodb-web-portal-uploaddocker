@@ -100,8 +100,6 @@ export function useTables() {
           table.id === updatedTable.id ? updatedTable : table
         )
       )
-      
-      toast.success('表格已更新')
     } catch (err) {
       console.error('Error updating table:', err)
       toast.error('更新表格失敗')

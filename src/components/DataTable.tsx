@@ -231,11 +231,107 @@ function SortableHeader({ column, sortConfig, onSort, onDelete, onUpdateColumn, 
 
 export function DataTable({ 
   table, 
-  onUpdateTable, 
+  onUpdateTable: originalOnUpdateTable, 
   onCreateRow, 
   onUpdateRow, 
   onDeleteRow 
 }: DataTableProps) {
+  // 存储表格ID用于localStorage的键名
+  const tableStorageKey = `table_data_${table.id || 'default'}`;
+  
+  // 包装onUpdateTable函数以添加持久化逻辑
+  const onUpdateTable = (updatedTable: Table) => {
+    // 保存到localStorage
+    try {
+      localStorage.setItem(tableStorageKey, JSON.stringify(updatedTable));
+    } catch (error) {
+      console.error('Failed to save table data to localStorage:', error);
+    }
+    // 调用原始的onUpdateTable函数
+    originalOnUpdateTable(updatedTable);
+  };
+  
+  // 辅助函数：根据列类型转换数据值
+  const convertValueByColumnType = (value: any, columnType: Column['type']): any => {
+    // 特殊情况处理 - 使用类型安全的空值检查
+    if (value === null || value === undefined || String(value).trim() === '') {
+      switch (columnType) {
+        case 'number':
+          return 0;
+        case 'boolean':
+          return false;
+        case 'date':
+          return null;
+        case 'select':
+          return [];
+        default:
+          return '';
+      }
+    }
+    
+    switch (columnType) {
+      case 'boolean':
+        // 处理布尔值类型转换 - 支持多种输入格式，使用String()确保类型安全
+        const boolValue = String(value).toLowerCase();
+        return boolValue === 'true' || boolValue === '1' || value === true || value === 1;
+      case 'number':
+        // 处理数字类型转换
+        const num = parseFloat(value);
+        return isNaN(num) ? 0 : num;
+      case 'date':
+        // 处理日期类型转换
+        const date = new Date(value);
+        return isNaN(date.getTime()) ? null : date.toISOString();
+      case 'select':
+        // 处理选择类型，确保多选时返回数组
+        if (Array.isArray(value)) {
+          return value;
+        } else {
+          return [value];
+        }
+      default:
+        // 对于文本、邮箱、电话、URL等类型，保持原样
+        return value;
+    }
+  };
+
+  // 从localStorage加载数据
+  useEffect(() => {
+    try {
+      const savedData = localStorage.getItem(tableStorageKey);
+      if (savedData) {
+        const parsedData = JSON.parse(savedData);
+        
+        // 进行类型转换
+        const tableWithCorrectTypes = {
+          ...parsedData,
+          rows: parsedData.rows.map((row: Row) => {
+            const typedRow = { ...row };
+            // 根据列类型转换每一行的数据
+            table.columns.forEach(column => {
+              if (column.id in typedRow) {
+                typedRow[column.id] = convertValueByColumnType(typedRow[column.id], column.type);
+              }
+            });
+            return typedRow;
+          })
+        };
+        
+        // 只有当本地存储的数据与props提供的数据不同时才更新
+        // 这里我们简单比较rows数组的长度和第一行的数据
+        const hasDifferentData = 
+          tableWithCorrectTypes.rows.length !== table.rows.length ||
+          (tableWithCorrectTypes.rows.length > 0 && table.rows.length > 0 &&
+           JSON.stringify(tableWithCorrectTypes.rows[0]) !== JSON.stringify(table.rows[0]));
+        
+        if (hasDifferentData) {
+          originalOnUpdateTable(tableWithCorrectTypes);
+        }        
+      }
+    } catch (error) {
+      console.error('Failed to load table data from localStorage:', error);
+    }
+  }, [tableStorageKey, originalOnUpdateTable, table.columns]);
   const [editingCell, setEditingCell] = useState<{ rowId: string; columnId: string } | null>(null);
   // 修改editValue类型以支持string或string[]，适应单选和多选模式
   const [editValue, setEditValue] = useState<string | string[] | null>('');
@@ -405,14 +501,16 @@ export function DataTable({
       }, {} as Record<string, any>)
     };
 
-    // 如果有 API 方法，使用 API；否則使用本地更新
+    // 优化：先立即更新本地表格数据，提供更好的用户体验
+    // 同时调用API以确保数据持久化到服务器
+    onUpdateTable({
+      ...table,
+      rows: [...table.rows, newRow] as Row[]
+    });
+
+    // 如果有API方法，也调用它
     if (onCreateRow) {
       onCreateRow(table.id, newRow);
-    } else {
-      onUpdateTable({
-        ...table,
-        rows: [...table.rows, newRow] as Row[]
-      });
     }
   };
 
@@ -430,7 +528,40 @@ export function DataTable({
 
   const startEdit = (rowId: string, columnId: string, currentValue: any) => {
     setEditingCell({ rowId, columnId });
-    setEditValue(String(currentValue || ''));
+    
+    // 根据列类型正确处理当前值
+    const column = table.columns.find(col => col.id === columnId);
+    if (column) {
+      switch (column.type) {
+        case 'boolean':
+          // 布尔值保持布尔类型
+          setEditValue(String(!!currentValue));
+          break;
+        case 'number':
+          // 数字保持数字类型，如果为空则设为0
+          setEditValue(currentValue || currentValue === 0 ? String(currentValue) : '0');
+          break;
+        case 'date':
+          // 日期类型处理，确保格式正确
+          if (currentValue) {
+            const date = new Date(currentValue);
+            // 转换为日期时间本地输入格式（YYYY-MM-DDTHH:MM）
+            const formattedDate = isNaN(date.getTime()) 
+              ? '' 
+              : date.toISOString().slice(0, 16); // 截取到分钟
+            setEditValue(formattedDate);
+          } else {
+            setEditValue('');
+          }
+          break;
+        default:
+          // 其他类型保持原样
+          setEditValue(currentValue || '');
+      }
+    } else {
+      // 如果找不到列，默认处理
+      setEditValue(currentValue || '');
+    }
   };
 
   const saveEdit = () => {
@@ -440,11 +571,49 @@ export function DataTable({
     if (!column) return;
 
     let processedValue: any = editValue;
+    
+    // 根据列类型进行正确的数据类型转换
     if (column.type === 'number') {
-      // 添加空值检查，修复类型错误
-      processedValue = editValue !== null ? parseFloat(editValue as string) || 0 : 0;
+      // 数字类型转换 - 确保处理各种边界情况
+      if (editValue === null || editValue === undefined || editValue === '') {
+        processedValue = 0;
+      } else {
+        const numValue = parseFloat(editValue as string);
+        processedValue = isNaN(numValue) ? 0 : numValue;
+      }
     } else if (column.type === 'boolean') {
-      processedValue = editValue === 'true';
+      // 布尔值类型转换 - 支持多种输入格式
+      // 添加类型安全检查，确保editValue是字符串类型
+      const stringValue = typeof editValue === 'string' ? editValue : String(editValue);
+      processedValue = stringValue === 'true' || stringValue === '1';
+    } else if (column.type === 'date') {
+        // 日期类型转换
+        if (editValue) {
+          // 确保editValue是有效的字符串类型
+          const dateString = Array.isArray(editValue) ? editValue[0] || '' : editValue;
+          const date = new Date(dateString);
+        // 检查是否为有效日期
+        processedValue = isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+      } else {
+        processedValue = null;
+      }
+    } else if (column.type === 'select') {
+      // 选择类型处理 - 区分单选和多选模式
+      if (column.isMultiSelect) {
+        // 多选模式 - 确保是数组类型
+        if (!Array.isArray(processedValue) && processedValue !== '') {
+          processedValue = [processedValue];
+        }
+      } else {
+        // 单选模式 - 确保是字符串类型
+        if (Array.isArray(processedValue) && processedValue.length > 0) {
+          processedValue = processedValue[0];
+        }
+      }
+    } else {
+      // 其他类型保持不变
+      // 空字符串应该保持为空字符串而不是null
+      processedValue = editValue === null ? '' : editValue;
     }
 
     // 獲取要更新的行
@@ -456,16 +625,18 @@ export function DataTable({
       [editingCell.columnId]: processedValue
     };
 
-    // 如果有 API 方法，使用 API；否則使用本地更新
+    // 优化：先立即更新本地表格数据，提供更好的用户体验
+    // 同时调用API以确保数据持久化到服务器
+    const updatedRows: Row[] = table.rows.map(row =>
+      row.id === editingCell.rowId
+        ? updatedRowData
+        : row
+    );
+    onUpdateTable({ ...table, rows: updatedRows });
+
+    // 如果有API方法，也调用它
     if (onUpdateRow) {
       onUpdateRow(table.id, editingCell.rowId, updatedRowData);
-    } else {
-      const updatedRows: Row[] = table.rows.map(row =>
-        row.id === editingCell.rowId
-          ? updatedRowData
-          : row
-      );
-      onUpdateTable({ ...table, rows: updatedRows });
     }
 
     setEditingCell(null);
@@ -759,9 +930,13 @@ export function DataTable({
 
     if (isEditing) {
       if (column.type === 'boolean') {
+        // 确保布尔值处理正确，支持多种输入格式
+        // 添加类型安全检查，确保editValue是字符串类型
+        const stringValue = typeof editValue === 'string' ? editValue : String(editValue);
+        const isChecked = stringValue === 'true' || stringValue === '1';
         return (
           <Checkbox
-            checked={editValue === 'true'}
+            checked={isChecked}
             onCheckedChange={(checked) => setEditValue(String(checked))}
             onBlur={saveEdit}
             autoFocus
@@ -772,11 +947,73 @@ export function DataTable({
         if (column.isMultiSelect) {
           // 多选模式
           const selectedValues = editValue ? (Array.isArray(editValue) ? editValue : [editValue]) : [];
+          const isAllSelected = selectedValues.length === column.options.length;
           
           return (
             <div className="w-full" onClick={(e) => e.stopPropagation()}>
               <div className="flex flex-col gap-2">
-                {column.options.map((option, index) => (
+                {/* 搜索框 - 使用组件级状态 */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search location ID"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-9 pr-8 h-9 bg-background"
+                  />
+                  {searchTerm && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute right-1 top-1/2 transform -translate-y-1/2 p-1 h-auto hover:bg-muted"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSearchTerm('');
+                      }}
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  )}
+                </div>
+                
+                {/* 全选和重置按钮 */}
+                <div className="flex items-center justify-between px-2">
+                  <div 
+                    className="flex items-center gap-2 cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (isAllSelected) {
+                        setEditValue([]);
+                      } else {
+                        setEditValue([...(column.options || [])]);
+                      }
+                    }}
+                  >
+                    <Checkbox 
+                      checked={isAllSelected}
+                      className="transition-all"
+                    />
+                    <span className="text-sm">全選</span>
+                  </div>
+                  
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditValue([]);
+                      setSearchTerm('');
+                    }}
+                  >
+                    Reset
+                  </Button>
+                </div>
+                
+                {/* 选项列表 - 使用组件级searchTerm进行过滤 */}
+                {column.options
+                  .filter(option => !searchTerm || option.toLowerCase().includes(searchTerm.toLowerCase()))
+                  .map((option, index) => (
                   <div 
                     key={option} 
                     className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors ${selectedValues.includes(option) ? 'bg-primary/10 border-primary/20' : 'hover:bg-muted'}`}
@@ -803,6 +1040,8 @@ export function DataTable({
                     </div>
                   </div>
                 ))}
+                
+                {/* 确认按钮 */}
                 <Button 
                   variant="default" 
                   size="sm" 
@@ -818,10 +1057,10 @@ export function DataTable({
                     onUpdateTable({ ...table, rows: updatedRows });
                     setEditingCell(null);
                     setEditValue('');
-                    toast.success('選項已更新');
+                    setSearchTerm('');
                   }}
                 >
-                  確認
+                  confirm
                 </Button>
               </div>
             </div>
@@ -836,15 +1075,17 @@ export function DataTable({
                 onValueChange={(val) => {
                   setEditValue(val);
                   // 立即更新數據並結束編輯
-                  const updatedRows: Row[] = table.rows.map(row =>
-                    row.id === editingCell?.rowId
-                      ? { ...row, [editingCell.columnId]: val }
-                      : row
-                  );
-                  onUpdateTable({ ...table, rows: updatedRows });
-                  setEditingCell(null);
-                  setEditValue('');
-                  toast.success('選項已更新');
+                  if (editingCell) {
+                    const updatedRows: Row[] = table.rows.map(row =>
+                      row.id === editingCell.rowId
+                        ? { ...row, [editingCell.columnId]: val }
+                        : row
+                    );
+                    onUpdateTable({ ...table, rows: updatedRows });
+                    setEditingCell(null);
+                    setEditValue('');
+                    toast.success('選項已更新');
+                  }
                 }}
               >
                 <SelectTrigger className="h-8 w-full" onClick={(e) => e.stopPropagation()}>
@@ -965,7 +1206,24 @@ export function DataTable({
           </div>
         );
       } else if (column.type === 'date' && value) {
-        // 处理日期类型，将T替换为空格
+        // 处理日期类型，使用更友好的格式显示
+        try {
+          const date = new Date(value);
+          if (!isNaN(date.getTime())) {
+            // 格式化日期为 YYYY-MM-DD HH:mm:ss
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            
+            return <span className="text-sm">{`${year}-${month}-${day} ${hours}:${minutes}:${seconds}`}</span>;
+          }
+        } catch (error) {
+          console.error('Invalid date format:', error);
+        }
+        // 如果日期无效，回退到简单替换T为空格
         return <span className="text-sm">{String(value).replace('T', ' ')}</span>;
       } else if (column.type === 'select' && column.options) {
         // 检查是否为多选模式

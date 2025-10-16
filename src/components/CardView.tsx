@@ -12,7 +12,7 @@ import { Table, Row } from '@/types';
 import { toast } from 'sonner';
 
 // 為選項生成一致的顏色
-const getOptionColor = (option: string, index: number) => {
+const getOptionColor = (option: any, index: number = 0) => {
   const colors = [
     'bg-blue-100 text-blue-800 border-blue-200',
     'bg-green-100 text-green-800 border-green-200', 
@@ -26,10 +26,29 @@ const getOptionColor = (option: string, index: number) => {
     'bg-emerald-100 text-emerald-800 border-emerald-200'
   ];
   
-  // 使用選項字串的哈希值來確保相同選項總是得到相同顏色
+  // 處理null和undefined
+  if (option === null || option === undefined) {
+    return colors[index % colors.length];
+  }
+  
+  // 將option轉換為字符串，處理各種數據類型
+  let str: string;
+  try {
+    if (typeof option === 'object') {
+      // 對於對象，嘗試序列化
+      str = JSON.stringify(option);
+    } else {
+      str = String(option);
+    }
+  } catch (e) {
+    // 如果序列化失敗，使用索引
+    return colors[index % colors.length];
+  }
+  
+  // 使用轉換後的字符串的哈希值來確保相同選項總是得到相同顏色
   let hash = 0;
-  for (let i = 0; i < option.length; i++) {
-    const char = option.charCodeAt(i);
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash; // 轉換為32位整數
   }
@@ -1179,7 +1198,7 @@ export function CardView({ table, onUpdateTable }: CardViewProps) {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 auto-cols-fr">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {filteredRows.map((row) => (
             <Card key={row.id} className={`relative group transition-all w-full max-w-md ${selectedRows.has(row.id) ? 'ring-2 ring-primary bg-primary/5' : ''}`}>
               <CardHeader className="pb-2">

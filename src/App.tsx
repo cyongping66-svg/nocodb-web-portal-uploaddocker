@@ -258,7 +258,7 @@ function App() {
         )}
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className={`flex-1 flex flex-col overflow-hidden ${isMobileView && !isSidebarOpen ? 'w-full' : ''}`}>
           {activeTable ? (
             <>
               {/* Header */}
@@ -297,9 +297,7 @@ function App() {
                     />
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    <CardView table={activeTable} onUpdateTable={updateTable} />
-                  </div>
+                  <CardView table={activeTable} onUpdateTable={updateTable} />
                 )}
               </div>
             </>
