@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import apiService, { getApiOrigin } from '@/lib/api';
 import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -302,10 +303,108 @@ export function DataTable({
   const [isBatchEditOpen, setIsBatchEditOpen] = useState(false);
   const [batchEditColumn, setBatchEditColumn] = useState('');
   const [batchEditValue, setBatchEditValue] = useState('');
+
+  // 文件預覽與右鍵選單狀態
+  const [fileContextMenu, setFileContextMenu] = useState<{ visible: boolean; x: number; y: number; rowId: string; columnId: string } | null>(null);
+  const [filePreview, setFilePreview] = useState<{ url: string; type?: string; name?: string } | null>(null);
+
+  useEffect(() => {
+    const hideMenu = () => setFileContextMenu(null);
+    window.addEventListener('click', hideMenu);
+    return () => window.removeEventListener('click', hideMenu);
+  }, []);
   
   // 欄位寬度調整相關狀態
   const [columnWidths, setColumnWidths] = useState<{ [columnId: string]: number }>({});
   const [resizingColumn, setResizingColumn] = useState<string | null>(null);
+
+  // 文件預覽 & 操作
+  const exportFile = (file: any) => {
+    if (!file?.url) return;
+    const url = file.url.startsWith('http') ? file.url : `${getApiOrigin()}${file.url}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = file.name || '';
+    a.target = '_blank';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    toast.success('已導出本地以供預覽');
+  };
+
+  const openFilePreview = (file: any) => {
+    if (!file?.url) return;
+    const url = file.url.startsWith('http') ? file.url : `${getApiOrigin()}${file.url}`;
+    const type: string | undefined = file.type;
+
+    const isImage = (type && type.startsWith('image')) || /\.(png|jpe?g|gif|webp)$/i.test(url);
+    const isVideo = (type && type.startsWith('video')) || /\.(mp4|m4v)$/i.test(url);
+    const isAudio = (type && type.startsWith('audio')) || /\.(mp3|m4a|wav)$/i.test(url);
+    const isPdf = (type && type.includes('pdf')) || /\.pdf$/i.test(url);
+
+    if (isImage || isVideo || isAudio || isPdf) {
+      setFilePreview({ url, type, name: file.name });
+    } else {
+      exportFile(file);
+    }
+  };
+
+  const fixMojibakeName = (name?: string) => {
+    if (!name || typeof name !== 'string') return name || '';
+    // Already contains readable CJK
+    if (/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/.test(name)) return name;
+    try {
+      // If percent-encoded, decode
+      if (/%[0-9A-Fa-f]{2}/.test(name)) {
+        return decodeURIComponent(name);
+      }
+    } catch {}
+    try {
+      // Attempt Latin-1 -> UTF-8 repair (classic mojibake fix)
+      // escape() transforms bytes to percent encoding, then decode as UTF-8
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      const repaired = decodeURIComponent(escape(name));
+      // If repaired contains CJK, prefer it
+      if (/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/.test(repaired)) return repaired;
+    } catch {}
+    return name;
+  };
+
+  const triggerReupload = async (rowId: string, columnId: string) => {
+    setFileContextMenu(null);
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.onchange = async (e: any) => {
+      const f: File | undefined = e.target?.files?.[0];
+      if (!f) return;
+      try {
+        const res = await apiService.uploadFile(table.id, rowId, columnId, f);
+        const fileData = res?.file ? { ...res.file, url: res.file.url } : null;
+        const updatedRows = table.rows.map(r => r.id === rowId ? { ...r, [columnId]: fileData } : r);
+        onUpdateTable({ ...table, rows: updatedRows });
+        toast.success('附件已更新');
+      } catch (err) {
+        console.error(err);
+        toast.error('重新上傳失敗');
+      }
+    };
+    input.click();
+  };
+
+  const deleteFileFromCell = async (rowId: string, columnId: string) => {
+    try {
+      await apiService.deleteFile(table.id, rowId, columnId);
+      const updatedRows = table.rows.map(r => r.id === rowId ? { ...r, [columnId]: null } : r);
+      onUpdateTable({ ...table, rows: updatedRows });
+      toast.success('附件已刪除');
+    } catch (err) {
+      console.error(err);
+      toast.error('刪除附件失敗');
+    } finally {
+      setFileContextMenu(null);
+    }
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -629,25 +728,30 @@ export function DataTable({
     setSelectOpen(false);
   };
 
-  const handleFileUpload = (rowId: string, columnId: string, file: File) => {
-    // Create a file URL for display
-    const fileUrl = URL.createObjectURL(file);
-    const fileData = {
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      url: fileUrl,
-      lastModified: file.lastModified
-    };
+  const handleFileUpload = async (rowId: string, columnId: string, file: File) => {
+    try {
+      // 調用後端 API 上傳文件並更新該列數據
+      const result = await apiService.uploadFile(table.id, rowId, columnId, file);
+      const fileData = result?.file || {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        url: '',
+      };
 
-    const updatedRows: Row[] = table.rows.map(row =>
-      row.id === rowId
-        ? { ...row, [columnId]: fileData }
-        : row
-    );
+      // 使用後端返回的可訪問 URL 更新前端狀態
+      const updatedRows: Row[] = table.rows.map(row =>
+        row.id === rowId
+          ? { ...row, [columnId]: fileData }
+          : row
+      );
 
-    onUpdateTable({ ...table, rows: updatedRows });
-    toast.success('檔案上傳成功');
+      onUpdateTable({ ...table, rows: updatedRows });
+      toast.success('檔案上傳成功');
+    } catch (error) {
+      console.error('File upload failed:', error);
+      toast.error('檔案上傳失敗');
+    }
   };
 
   const cancelEdit = () => {
@@ -1180,17 +1284,43 @@ export function DataTable({
         return <Checkbox checked={Boolean(value)} disabled />;
       } else if (column.type === 'file' && value) {
         return (
-          <div className="flex items-center gap-2 text-sm">
+          <div
+            className="flex items-center gap-2 text-sm"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setFileContextMenu({ visible: true, x: e.clientX, y: e.clientY, rowId: row.id, columnId: column.id });
+            }}
+          >
             <File className="w-4 h-4 text-blue-500" />
             <a 
-              href={value.url} 
+              href={value.url?.startsWith('http') ? value.url : `${getApiOrigin()}${value.url}`}
               target="_blank" 
               rel="noopener noreferrer"
-              className="text-blue-600 hover:text-blue-800 underline truncate max-w-[150px]"
-              onClick={(e) => e.stopPropagation()}
+              className="text-blue-600 hover:text-blue-800 underline truncate max-w-[180px]"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                openFilePreview(value);
+              }}
             >
-              {value.name}
+              {fixMojibakeName(value.name)}
             </a>
+
+            {fileContextMenu?.visible && fileContextMenu.rowId === row.id && fileContextMenu.columnId === column.id && (
+              <div
+                className="z-50 bg-popover border rounded shadow text-sm p-1"
+                style={{ position: 'fixed', top: fileContextMenu.y, left: fileContextMenu.x }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <button className="block w-full text-left px-3 py-1 hover:bg-muted" onClick={() => triggerReupload(row.id, column.id)}>
+                  重新上傳
+                </button>
+                <button className="block w-full text-left px-3 py-1 hover:bg-muted text-red-600" onClick={() => deleteFileFromCell(row.id, column.id)}>
+                  刪除附件
+                </button>
+              </div>
+            )}
           </div>
         );
       } else if (column.type === 'url' && value) {
@@ -2099,6 +2229,46 @@ export function DataTable({
             新增行
           </Button>
         </div>
+      {/* 檔案預覽彈窗 */}
+      {filePreview && (
+        <Dialog open={!!filePreview} onOpenChange={(open) => { if (!open) setFilePreview(null); }}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>{fixMojibakeName(filePreview?.name) || '檔案預覽'}</DialogTitle>
+            </DialogHeader>
+            <div className="w-full">
+              {/* 圖片預覽 */}
+              {((filePreview?.type && filePreview.type.startsWith('image')) || /\.(png|jpe?g|gif|webp)$/i.test(filePreview?.url || '')) && (
+                <img src={filePreview!.url} alt={fixMojibakeName(filePreview?.name) || ''} className="max-h-[70vh] mx-auto" />
+              )}
+
+              {/* 影片預覽 */}
+              {((filePreview?.type && filePreview.type.startsWith('video')) || /\.(mp4|m4v)$/i.test(filePreview?.url || '')) && (
+                <video src={filePreview!.url} controls className="w-full max-h-[70vh]" />
+              )}
+
+              {/* 音訊預覽 */}
+              {((filePreview?.type && filePreview.type.startsWith('audio')) || /\.(mp3|m4a|wav)$/i.test(filePreview?.url || '')) && (
+                <audio src={filePreview!.url} controls className="w-full" />
+              )}
+
+              {/* PDF 預覽 */}
+              {((filePreview?.type && filePreview.type.includes('pdf')) || /\.pdf$/i.test(filePreview?.url || '')) && (
+                <iframe src={filePreview!.url} className="w-full h-[70vh]" title={fixMojibakeName(filePreview?.name) || 'PDF 預覽'} />
+              )}
+
+              {/* 其他類型 fallback，用 iframe 嘗試顯示 */}
+              {!(
+                (filePreview?.type && (filePreview.type.startsWith('image') || filePreview.type.startsWith('video') || filePreview.type.startsWith('audio') || filePreview.type.includes('pdf')))
+                || /\.(png|jpe?g|gif|webp|mp4|m4v|mp3|m4a|wav|pdf)$/i.test(filePreview?.url || '')
+              ) && (
+                <iframe src={filePreview!.url} className="w-full h-[70vh]" title={fixMojibakeName(filePreview?.name) || '檔案預覽'} />
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
       </div>
     </div>
   );

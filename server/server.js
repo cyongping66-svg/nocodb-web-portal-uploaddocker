@@ -17,6 +17,9 @@ app.use(morgan('combined'));
 app.use(cors());
 app.use(express.json());
 
+// 提供上傳文件的靜態訪問
+app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // API 路由
 app.use('/api/tables', require('./routes/tables'));
 app.use('/api/tables', require('./routes/rows'));

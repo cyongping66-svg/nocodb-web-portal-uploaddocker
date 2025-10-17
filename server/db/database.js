@@ -196,6 +196,16 @@ class DatabaseWrapper {
     }
   }
 
+  // 根據行ID獲取單行（新增）
+  getRow(rowId, callback) {
+    try {
+      const row = this.db.prepare("SELECT * FROM rows WHERE id = ?").get(rowId);
+      callback(null, row);
+    } catch (err) {
+      callback(err, null);
+    }
+  }
+
   // 創建行
   createRow(tableId, rowData, callback) {
     try {

@@ -2,8 +2,27 @@ const express = require('express'); // 导入express模块
 const router = express.Router();
 const DatabaseWrapper = require('../db/database'); // 使用DatabaseWrapper类
 const { v4: uuidv4 } = require('uuid');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
 
 const db = new DatabaseWrapper(); // 创建DatabaseWrapper实例
+
+// 配置 multer 用於文件上傳
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const { tableId, rowId } = req.params;
+    const uploadDir = path.join(__dirname, '..', 'uploads', tableId, rowId);
+    fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + '-' + file.originalname);
+  }
+});
+
+const upload = multer({ storage });
 
 // 獲取表格的所有行
 router.get('/:tableId/rows', (req, res) => {
@@ -78,6 +97,98 @@ router.delete('/:tableId/rows/:rowId', (req, res) => {
     }
 
     res.json({ message: 'Row deleted successfully' });
+  });
+});
+
+// 檔案上傳並更新指定列的數據
+router.post('/:tableId/rows/:rowId/files/:columnId', upload.single('file'), (req, res) => {
+  const { tableId, rowId, columnId } = req.params;
+  const file = req.file;
+
+  if (!file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  // 構造可訪問的文件 URL（通過 /api/uploads 提供靜態訪問）
+  const fileUrl = `/api/uploads/${tableId}/${rowId}/${file.filename}`;
+
+  // 讀取當前行數據，合併文件欄位
+  db.getRow(rowId, (err, row) => {
+    if (err) {
+      console.error('Error getting row:', err);
+      return res.status(500).json({ error: 'Failed to get row' });
+    }
+
+    if (!row) {
+      return res.status(404).json({ error: 'Row not found' });
+    }
+
+    const data = JSON.parse(row.data || '{}');
+    data[columnId] = {
+      name: file.originalname,
+      size: file.size,
+      type: file.mimetype,
+      url: fileUrl,
+      path: file.path
+    };
+
+    db.updateRow(rowId, { id: rowId, ...data }, (updateErr) => {
+      if (updateErr) {
+        console.error('Error updating row with file:', updateErr);
+        return res.status(500).json({ error: 'Failed to update row with file' });
+      }
+
+      res.json({
+        message: 'File uploaded and row updated successfully',
+        file: {
+          name: file.originalname,
+          size: file.size,
+          type: file.mimetype,
+          url: fileUrl
+        }
+      });
+    });
+  });
+});
+
+// 刪除指定列的附件
+router.delete('/:tableId/rows/:rowId/files/:columnId', (req, res) => {
+  const { tableId, rowId, columnId } = req.params;
+
+  // 讀取當前行資料
+  db.getRow(rowId, (err, row) => {
+    if (err) {
+      console.error('Error getting row:', err);
+      return res.status(500).json({ error: 'Failed to get row' });
+    }
+
+    if (!row) {
+      return res.status(404).json({ error: 'Row not found' });
+    }
+
+    const data = JSON.parse(row.data || '{}');
+    const fileInfo = data[columnId];
+
+    // 嘗試刪除磁碟檔案（若存在路徑）
+    if (fileInfo && fileInfo.path) {
+      fs.unlink(fileInfo.path, (unlinkErr) => {
+        if (unlinkErr) {
+          console.warn('Warning: failed to remove file:', fileInfo.path, unlinkErr);
+        }
+      });
+    }
+
+    // 清空欄位中的附件資訊
+    data[columnId] = null;
+
+    db.updateRow(rowId, { id: rowId, ...data }, (updateErr) => {
+      if (updateErr) {
+        console.error('Error clearing file from row:', updateErr);
+        return res.status(500).json({ error: 'Failed to clear file from row' });
+      }
+
+      res.json({ message: 'File removed successfully' });
+    });
   });
 });
 

@@ -1,8 +1,6 @@
 // API 服務配置
 // API 基礎配置
-const API_BASE_URL = process.env.NODE_ENV === 'production' 
-  ? '/api'  // 生產環境通過 nginx 代理
-  : 'http://localhost:8000/api';  // 開發環境直接連接，後端服務運行在8000端口
+const API_BASE_URL = '/api';
 
 interface RequestOptions extends RequestInit {
   headers?: Record<string, string>;
@@ -22,6 +20,7 @@ class ApiService {
         'Content-Type': 'application/json',
         ...options.headers,
       },
+      credentials: 'include',
       ...options,
     };
 
@@ -93,6 +92,42 @@ class ApiService {
     });
   }
 
+  // 檔案上傳 API（新增）
+  async uploadFile(tableId, rowId, columnId, file: File) {
+    const url = `${this.baseURL}/tables/${tableId}/rows/${rowId}/files/${columnId}`;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+
+      // 將相對路徑轉換為絕對 URL，以便在不同端口下正確訪問
+      if (data?.file?.url && data.file.url.startsWith('/')) {
+        const apiOrigin = getApiOrigin();
+        data.file.url = `${apiOrigin}${data.file.url}`;
+      }
+
+      return data;
+    } catch (error) {
+      console.error(`File upload failed: ${url}`, error);
+      throw error;
+    }
+  }
+
+  async deleteFile(tableId, rowId, columnId) {
+    return this.request(`/tables/${tableId}/rows/${rowId}/files/${columnId}`, {
+      method: 'DELETE',
+    });
+  }
+
   async batchDeleteRows(tableId, rowIds) {
     return this.request(`/tables/${tableId}/rows/batch`, {
       method: 'POST',
@@ -118,3 +153,4 @@ class ApiService {
 
 export const apiService = new ApiService();
 export default apiService;
+export const getApiOrigin = () => API_BASE_URL.replace(/\/api$/, '');
