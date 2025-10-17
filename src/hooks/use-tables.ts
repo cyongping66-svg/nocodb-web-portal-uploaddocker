@@ -113,9 +113,15 @@ export function useTables() {
   // 行數據操作方法
   const createRow = async (tableId: string, rowData: any) => {
     try {
+      // 确保有唯一的ID
+      if (!rowData.id) {
+        rowData.id = `row_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      }
+      
+      // 调用API创建新行
       await apiService.createRow(tableId, rowData)
       
-      // 重新加載該表格的數據
+      // 重新加載該表格的數據，确保UI与数据库保持同步
       const rows = await apiService.getTableRows(tableId)
       setTablesState(prev => 
         prev.map(table => 
@@ -124,17 +130,32 @@ export function useTables() {
       )
       
       toast.success('數據已添加')
+      return { success: true, rowId: rowData.id } // 返回成功标志和行ID
     } catch (err) {
       console.error('Error creating row:', err)
       toast.error('添加數據失敗')
+      throw err; // 抛出错误以便上层组件处理
     }
   }
 
   const updateRow = async (tableId: string, rowId: string, rowData: any) => {
     try {
-      await apiService.updateRow(tableId, rowId, rowData)
+      // 首先获取当前行数据
+      const table = tables.find(t => t.id === tableId);
+      const currentRow = table?.rows.find(row => row.id === rowId);
       
-      // 重新加載該表格的數據
+      // 如果找到当前行，合并现有数据和新数据
+      const updatedRowData = currentRow 
+        ? { ...currentRow, ...rowData }
+        : rowData;
+      
+      // 确保id一致
+      updatedRowData.id = rowId;
+      
+      // 调用API更新数据
+      await apiService.updateRow(tableId, rowId, updatedRowData)
+      
+      // 重新加載該表格的數據，确保UI与数据库保持同步
       const rows = await apiService.getTableRows(tableId)
       setTablesState(prev => 
         prev.map(table => 
@@ -143,17 +164,20 @@ export function useTables() {
       )
       
       toast.success('數據已更新')
+      return { success: true } // 返回成功标志
     } catch (err) {
       console.error('Error updating row:', err)
       toast.error('更新數據失敗')
+      throw err; // 抛出错误以便上层组件处理
     }
   }
 
   const deleteRow = async (tableId: string, rowId: string) => {
     try {
+      // 调用API删除行
       await apiService.deleteRow(tableId, rowId)
       
-      // 重新加載該表格的數據
+      // 重新加載該表格的數據，确保UI与数据库保持同步
       const rows = await apiService.getTableRows(tableId)
       setTablesState(prev => 
         prev.map(table => 
@@ -162,9 +186,11 @@ export function useTables() {
       )
       
       toast.success('數據已刪除')
+      return { success: true } // 返回成功标志
     } catch (err) {
       console.error('Error deleting row:', err)
       toast.error('刪除數據失敗')
+      throw err; // 抛出错误以便上层组件处理
     }
   }
 

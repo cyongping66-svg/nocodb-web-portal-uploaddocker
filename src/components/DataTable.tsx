@@ -236,17 +236,8 @@ export function DataTable({
   onUpdateRow, 
   onDeleteRow 
 }: DataTableProps) {
-  // 存储表格ID用于localStorage的键名
-  const tableStorageKey = `table_data_${table.id || 'default'}`;
-  
-  // 包装onUpdateTable函数以添加持久化逻辑
+  // 直接使用原始的onUpdateTable函数，不再使用localStorage
   const onUpdateTable = (updatedTable: Table) => {
-    // 保存到localStorage
-    try {
-      localStorage.setItem(tableStorageKey, JSON.stringify(updatedTable));
-    } catch (error) {
-      console.error('Failed to save table data to localStorage:', error);
-    }
     // 调用原始的onUpdateTable函数
     originalOnUpdateTable(updatedTable);
   };
@@ -295,43 +286,7 @@ export function DataTable({
     }
   };
 
-  // 从localStorage加载数据
-  useEffect(() => {
-    try {
-      const savedData = localStorage.getItem(tableStorageKey);
-      if (savedData) {
-        const parsedData = JSON.parse(savedData);
-        
-        // 进行类型转换
-        const tableWithCorrectTypes = {
-          ...parsedData,
-          rows: parsedData.rows.map((row: Row) => {
-            const typedRow = { ...row };
-            // 根据列类型转换每一行的数据
-            table.columns.forEach(column => {
-              if (column.id in typedRow) {
-                typedRow[column.id] = convertValueByColumnType(typedRow[column.id], column.type);
-              }
-            });
-            return typedRow;
-          })
-        };
-        
-        // 只有当本地存储的数据与props提供的数据不同时才更新
-        // 这里我们简单比较rows数组的长度和第一行的数据
-        const hasDifferentData = 
-          tableWithCorrectTypes.rows.length !== table.rows.length ||
-          (tableWithCorrectTypes.rows.length > 0 && table.rows.length > 0 &&
-           JSON.stringify(tableWithCorrectTypes.rows[0]) !== JSON.stringify(table.rows[0]));
-        
-        if (hasDifferentData) {
-          originalOnUpdateTable(tableWithCorrectTypes);
-        }        
-      }
-    } catch (error) {
-      console.error('Failed to load table data from localStorage:', error);
-    }
-  }, [tableStorageKey, originalOnUpdateTable, table.columns]);
+  // 不再从localStorage加载数据，完全依赖props和后端API
   const [editingCell, setEditingCell] = useState<{ rowId: string; columnId: string } | null>(null);
   // 修改editValue类型以支持string或string[]，适应单选和多选模式
   const [editValue, setEditValue] = useState<string | string[] | null>('');
@@ -634,9 +589,39 @@ export function DataTable({
     );
     onUpdateTable({ ...table, rows: updatedRows });
 
-    // 如果有API方法，也调用它
+    // 如果有API方法，调用它进行数据持久化
     if (onUpdateRow) {
-      onUpdateRow(table.id, editingCell.rowId, updatedRowData);
+      // 只传递实际修改的字段，而不是整个行对象，提高效率
+      const fieldData = {
+        [editingCell.columnId]: processedValue
+      };
+      
+      // 异步调用API并添加错误处理
+      (async () => {
+        try {
+          await onUpdateRow(table.id, editingCell.rowId, fieldData);
+          console.log('Row updated successfully');
+        } catch (error) {
+          console.error('Error updating row:', error);
+          // 添加错误提示
+          toast.error('更新数据失败，请重试');
+          
+          // 由于更新失败，恢复原始数据
+          const originalRows: Row[] = table.rows.map(row => {
+            if (row.id === editingCell.rowId) {
+              const originalValue = row[editingCell.columnId];
+              return {
+                ...row,
+                [editingCell.columnId]: originalValue
+              };
+            }
+            return row;
+          });
+          
+          // 更新表格数据以显示原始值
+          onUpdateTable({ ...table, rows: originalRows });
+        }
+      })();
     }
 
     setEditingCell(null);
@@ -703,19 +688,34 @@ export function DataTable({
     }
   };
 
-  const batchDelete = () => {
+  const batchDelete = async () => {
     if (selectedRows.size === 0) {
       toast.error('請選擇要刪除的資料');
       return;
     }
 
-    const updatedRows: Row[] = table.rows.filter(row => !selectedRows.has(row.id));
-    onUpdateTable({ ...table, rows: updatedRows });
-    setSelectedRows(new Set());
-    toast.success(`已刪除 ${selectedRows.size} 筆資料`);
+    try {
+      // 优先使用API进行批量删除
+      if (onDeleteRow) {
+        // 循环删除每一行，直到有批量删除API
+        const deletePromises = Array.from(selectedRows).map(rowId => 
+          onDeleteRow(table.id, rowId)
+        );
+        await Promise.all(deletePromises);
+      } else {
+        // 备用：更新本地表格数据
+        const updatedRows: Row[] = table.rows.filter(row => !selectedRows.has(row.id));
+        onUpdateTable({ ...table, rows: updatedRows });
+      }
+      setSelectedRows(new Set());
+      toast.success(`已刪除 ${selectedRows.size} 筆資料`);
+    } catch (error) {
+      console.error('批量删除失败:', error);
+      toast.error('批量删除操作失败');
+    }
   };
 
-  const batchEdit = () => {
+  const batchEdit = async () => {
     if (selectedRows.size === 0) {
       toast.error('請選擇要編輯的資料');
       return;
@@ -735,18 +735,33 @@ export function DataTable({
       processedValue = batchEditValue === 'true';
     }
 
-    const updatedRows: Row[] = table.rows.map(row =>
-      selectedRows.has(row.id)
-        ? { ...row, [batchEditColumn]: processedValue }
-        : row
-    );
-
-    onUpdateTable({ ...table, rows: updatedRows });
-    setSelectedRows(new Set());
-    setBatchEditColumn('');
-    setBatchEditValue('');
-    setIsBatchEditOpen(false);
-    toast.success(`已更新 ${selectedRows.size} 筆資料`);
+    try {
+      // 优先使用API进行批量更新
+      if (onUpdateRow) {
+        const fieldData = { [batchEditColumn]: processedValue };
+        // 循环更新每一行
+        const updatePromises = Array.from(selectedRows).map(rowId => 
+          onUpdateRow(table.id, rowId, fieldData)
+        );
+        await Promise.all(updatePromises);
+      } else {
+        // 备用：更新本地表格数据
+        const updatedRows: Row[] = table.rows.map(row =>
+          selectedRows.has(row.id)
+            ? { ...row, [batchEditColumn]: processedValue }
+            : row
+        );
+        onUpdateTable({ ...table, rows: updatedRows });
+      }
+      setSelectedRows(new Set());
+      setBatchEditColumn('');
+      setBatchEditValue('');
+      setIsBatchEditOpen(false);
+      toast.success(`已更新 ${selectedRows.size} 筆資料`);
+    } catch (error) {
+      console.error('批量更新失败:', error);
+      toast.error('批量更新操作失败');
+    }
   };
 
   const batchExport = () => {
@@ -796,7 +811,7 @@ export function DataTable({
     }
   };
 
-  const batchDuplicate = () => {
+  const batchDuplicate = async () => {
     if (selectedRows.size === 0) {
       toast.error('請選擇要複製的資料');
       return;
@@ -808,13 +823,27 @@ export function DataTable({
       id: `${Date.now()}-${Math.random()}`,
     }));
 
-    onUpdateTable({
-      ...table,
-      rows: [...table.rows, ...duplicatedRows]
-    });
+    try {
+      // 优先使用API创建新行
+      if (onCreateRow) {
+        const createPromises = duplicatedRows.map(row => 
+          onCreateRow(table.id, row)
+        );
+        await Promise.all(createPromises);
+      } else {
+        // 备用：更新本地表格数据
+        onUpdateTable({
+          ...table,
+          rows: [...table.rows, ...duplicatedRows]
+        });
+      }
 
-    setSelectedRows(new Set());
-    toast.success(`已複製 ${selectedRowsData.length} 筆資料`);
+      setSelectedRows(new Set());
+      toast.success(`已複製 ${selectedRowsData.length} 筆資料`);
+    } catch (error) {
+      console.error('批量复制失败:', error);
+      toast.error('批量复制操作失败');
+    }
   };
 
   const filteredRows = table.rows.filter(row => {

@@ -62,17 +62,8 @@ interface CardViewProps {
 }
 
 export function CardView({ table, onUpdateTable: originalOnUpdateTable }: CardViewProps) {
-  // 存储表格ID用于localStorage的键名
-  const tableStorageKey = `table_data_${table.id || 'default'}`;
-  
-  // 包装onUpdateTable函数以添加持久化逻辑
+  // 直接使用原始的onUpdateTable函数，不再使用localStorage
   const onUpdateTable = (updatedTable: Table) => {
-    // 保存到localStorage
-    try {
-      localStorage.setItem(tableStorageKey, JSON.stringify(updatedTable));
-    } catch (error) {
-      console.error('Failed to save table data to localStorage:', error);
-    }
     // 调用原始的onUpdateTable函数
     originalOnUpdateTable(updatedTable);
   };
