@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Edit, Trash2, ArrowUp, ArrowDown, GripVertical, Link, File, Mail, Phone, Search, Filter, X, CheckSquare, Square, Download, Copy } from 'lucide-react';
+import { Plus, Edit, Trash2, ArrowUp, ArrowDown, GripVertical, Link, File, Mail, Phone, Search, Filter, X, CheckSquare, Square, Download, Copy, Settings } from 'lucide-react';
 import { Table, Column, Row } from '@/types';
 import { toast } from 'sonner';
 import {
@@ -69,15 +69,14 @@ interface SortableHeaderProps {
   sortConfig: { key: string; direction: 'asc' | 'desc' } | null;
   onSort: (columnId: string) => void;
   onDelete: (columnId: string) => void;
-  onUpdateColumn: (columnId: string, newName: string) => void;
   columnWidth?: number;
   onResizeStart: (e: React.MouseEvent, columnId: string) => void;
   resizingColumn: string | null;
+  onOpenColumnConfig: (columnId: string) => void;
 }
 
-function SortableHeader({ column, sortConfig, onSort, onDelete, onUpdateColumn, columnWidth, onResizeStart, resizingColumn }: SortableHeaderProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editValue, setEditValue] = useState(column.name);
+function SortableHeader({ column, sortConfig, onSort, onDelete, columnWidth, onResizeStart, resizingColumn, onOpenColumnConfig }: SortableHeaderProps) {
+
 
   const {
     attributes,
@@ -94,33 +93,13 @@ function SortableHeader({ column, sortConfig, onSort, onDelete, onUpdateColumn, 
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const handleEditClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setIsEditing(true);
-    setEditValue(column.name);
-  };
 
-  const handleSaveEdit = () => {
-    if (editValue.trim() && editValue.trim() !== column.name) {
-      onUpdateColumn(column.id, editValue.trim());
-    }
-    setIsEditing(false);
-  };
 
-  const handleCancelEdit = () => {
-    setIsEditing(false);
-    setEditValue(column.name);
-  };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleSaveEdit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      handleCancelEdit();
-    }
-  };
+
+
+
+
 
   return (
     <th 
@@ -142,67 +121,54 @@ function SortableHeader({ column, sortConfig, onSort, onDelete, onUpdateColumn, 
             <GripVertical className="w-3 h-3 text-muted-foreground" />
           </button>
           
-          {isEditing ? (
-            <Input
-                // 添加空值检查，修复类型错误
-                value={editValue || ''}
-                onChange={(e) => setEditValue(e.target.value)}
-              onBlur={handleSaveEdit}
-              onKeyDown={handleKeyDown}
-              className="h-7 text-sm font-medium"
-              autoFocus
-            />
-          ) : (
+          <div className="flex items-center gap-1">
             <div className="flex items-center gap-1">
-              <div className="flex items-center gap-1">
-                <span 
-                  className="hover:bg-muted/50 px-1 py-0.5 rounded cursor-pointer transition-colors text-sm font-medium text-foreground whitespace-nowrap"
-                  onClick={handleEditClick}
-                  title="點擊編輯欄位名稱"
-                >
-                  {column.name}
-                </span>
-                <button
-                  className="flex items-center justify-center w-5 h-5 text-xs text-muted-foreground hover:text-primary hover:bg-muted/50 rounded transition-colors"
-                  onClick={() => onSort(column.id)}
-                  title={
-                    sortConfig?.key === column.id 
-                      ? `當前排序：${sortConfig.direction === 'asc' ? '升序' : '降序'}，點擊切換` 
-                      : '點擊排序'
-                  }
-                >
-                  {sortConfig?.key === column.id ? (
-                    sortConfig.direction === 'asc' ? (
-                      <ArrowUp className="w-3 h-3" />
-                    ) : (
-                      <ArrowDown className="w-3 h-3" />
-                    )
-                  ) : (
-                    <div className="flex flex-col items-center gap-0">
-                      <ArrowUp className="w-2.5 h-2.5 opacity-40" />
-                      <ArrowDown className="w-2.5 h-2.5 opacity-40 -mt-0.5" />
-                    </div>
-                  )}
-                </button>
-              </div>
-              <button
-                className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded"
-                onClick={handleEditClick}
-                title="編輯欄位名稱"
+              <span 
+                className="px-1 py-0.5 rounded text-sm font-medium text-foreground whitespace-nowrap"
+                title={column.name}
               >
-                <Edit className="w-3 h-3 text-muted-foreground" />
+                {column.name}
+              </span>
+              <button
+                className="flex items-center justify-center w-5 h-5 text-xs text-muted-foreground hover:text-primary hover:bg-muted/50 rounded transition-colors"
+                onClick={() => onSort(column.id)}
+                title={
+                  sortConfig?.key === column.id 
+                    ? `當前排序：${sortConfig.direction === 'asc' ? '升序' : '降序'}，點擊切換` 
+                    : '點擊排序'
+                }
+              >
+                {sortConfig?.key === column.id ? (
+                  sortConfig.direction === 'asc' ? (
+                    <ArrowUp className="w-3 h-3" />
+                  ) : (
+                    <ArrowDown className="w-3 h-3" />
+                  )
+                ) : (
+                  <div className="flex flex-col items-center gap-0">
+                    <ArrowUp className="w-2.5 h-2.5 opacity-40" />
+                    <ArrowDown className="w-2.5 h-2.5 opacity-40 -mt-0.5" />
+                  </div>
+                )}
               </button>
             </div>
-          )}
-        </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 h-auto"
-          onClick={() => onDelete(column.id)}
-        >
-          <Trash2 className="w-3 h-3" />
-        </Button>
+            <button
+              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded"
+              onClick={(e) => { e.stopPropagation(); onOpenColumnConfig(column.id); }}
+              title="欄位設定"
+            >
+              <Settings className="w-3 h-3 text-muted-foreground" />
+            </button>
+            <button
+              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded"
+              onClick={(e) => { e.stopPropagation(); onDelete(column.id); }}
+              title="刪除欄位"
+            >
+              <Trash2 className="w-3 h-3 text-muted-foreground" />
+            </button>
+          </div>
+          </div>
+        {/* 刪除按鈕已移至與編輯、設定同一樣式區塊 */}
       </div>
       
       {/* 可拖拽的調整邊框 */}
@@ -295,7 +261,45 @@ export function DataTable({
   const [isAddColumnOpen, setIsAddColumnOpen] = useState(false);
   // 为newColumn添加isMultiSelect属性的支持
   const [newColumn, setNewColumn] = useState({ name: '', type: 'text' as Column['type'], options: [''], isMultiSelect: false });
+  const [configColumnId, setConfigColumnId] = useState<string | null>(null);
+  const [configForm, setConfigForm] = useState<{ name: string; type: Column['type']; options: string[]; isMultiSelect: boolean } | null>(null);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+
+  const openColumnConfig = (columnId: string) => {
+    const col = table.columns.find(c => c.id === columnId);
+    if (!col) return;
+    setConfigColumnId(columnId);
+    setConfigForm({
+      name: col.name,
+      type: col.type,
+      options: col.options ? [...col.options] : [''],
+      isMultiSelect: !!col.isMultiSelect,
+    });
+  };
+
+  const saveColumnConfig = () => {
+    if (!configColumnId || !configForm) return;
+    const updatedColumns = table.columns.map(col =>
+      col.id === configColumnId
+        ? {
+            ...col,
+            name: configForm.name.trim() || col.name,
+            type: configForm.type,
+            options: configForm.type === 'select' ? configForm.options.filter(o => o.trim()) : undefined,
+            isMultiSelect: configForm.type === 'select' ? !!configForm.isMultiSelect : undefined,
+          }
+        : col
+    );
+    onUpdateTable({ ...table, columns: updatedColumns });
+    setConfigColumnId(null);
+    setConfigForm(null);
+    toast.success('欄位設定已更新');
+  };
+
+  const cancelColumnConfig = () => {
+    setConfigColumnId(null);
+    setConfigForm(null);
+  };
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState<{ [columnId: string]: string }>({});
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -499,18 +503,7 @@ export function DataTable({
     toast.success('欄位新增成功');
   };
 
-  const updateColumn = (columnId: string, newName: string) => {
-    const updatedColumns = table.columns.map(col =>
-      col.id === columnId ? { ...col, name: newName } : col
-    );
-
-    onUpdateTable({
-      ...table,
-      columns: updatedColumns
-    });
-
-    toast.success('欄位名稱已更新');
-  };
+  // 已移除表格視圖的欄位名稱編輯功能
 
   const deleteColumn = (columnId: string) => {
     const updatedColumns = table.columns.filter(col => col.id !== columnId);
@@ -527,44 +520,55 @@ export function DataTable({
     toast.success('欄位刪除成功');
   };
 
-  const addRow = () => {
-    const newRow: Row = {
-      id: Date.now().toString(),
-      ...table.columns.reduce((acc, col) => {
-        switch (col.type) {
-          case 'boolean':
-            acc[col.id] = false;
-            break;
-          case 'date':
-            acc[col.id] = new Date().toISOString().split('T')[0];
-            break;
-          case 'number':
-            acc[col.id] = 0;
-            break;
-          case 'file':
-            acc[col.id] = null;
-            break;
-          case 'select':
-            // 对于选择类型，设置为空字符串，这样会显示占位符
-            acc[col.id] = '';
-            break;
-          default:
-            acc[col.id] = '';
-        }
-        return acc;
-      }, {} as Record<string, any>)
-    };
+  const addRow = async () => {
+    try {
+      // 新增前，先將當前資料保存到本地資料庫（不顯示成功提示）
+      if (onUpdateRow) {
+        await Promise.all(
+          table.rows.map((row) => onUpdateRow(table.id, row.id, row))
+        );
+      }
 
-    // 优化：先立即更新本地表格数据，提供更好的用户体验
-    // 同时调用API以确保数据持久化到服务器
-    onUpdateTable({
-      ...table,
-      rows: [...table.rows, newRow] as Row[]
-    });
+      const newRow: Row = {
+        id: Date.now().toString(),
+        ...table.columns.reduce((acc, col) => {
+          switch (col.type) {
+            case 'boolean':
+              acc[col.id] = false;
+              break;
+            case 'date':
+              acc[col.id] = new Date().toISOString().split('T')[0];
+              break;
+            case 'number':
+              acc[col.id] = 0;
+              break;
+            case 'file':
+              acc[col.id] = null;
+              break;
+            case 'select':
+              acc[col.id] = '';
+              break;
+            default:
+              acc[col.id] = '';
+          }
+          return acc;
+        }, {} as Record<string, any>)
+      };
 
-    // 如果有API方法，也调用它
-    if (onCreateRow) {
-      onCreateRow(table.id, newRow);
+      // 先更新本地表格視圖
+      onUpdateTable({
+        ...table,
+        rows: [...table.rows, newRow] as Row[]
+      });
+
+      // 再持久化新增行，僅顯示一次成功新增提示
+      if (onCreateRow) {
+        await onCreateRow(table.id, newRow);
+      }
+      toast.success('成功新增行');
+    } catch (err) {
+      console.error('保存當前資料失敗', err);
+      toast.error('保存當前資料失敗');
     }
   };
 
@@ -618,13 +622,14 @@ export function DataTable({
     }
   };
 
-  const saveEdit = () => {
+  const saveEdit = (overrideValue?: any) => {
     if (!editingCell) return;
 
     const column = table.columns.find(col => col.id === editingCell.columnId);
     if (!column) return;
 
-    let processedValue: any = editValue;
+    // 中文註釋：若提供覆蓋值（例如單選當前改動），優先使用；否則退回使用當前狀態中的 editValue
+    let processedValue: any = overrideValue !== undefined ? overrideValue : editValue;
     
     // 根据列类型进行正确的数据类型转换
     if (column.type === 'number') {
@@ -1181,16 +1186,10 @@ export function DataTable({
                   className="mt-2 h-8"
                   onClick={(e) => {
                     e.stopPropagation();
-                    // 立即更新數據並結束編輯
-                    const updatedRows: Row[] = table.rows.map(row =>
-                      row.id === editingCell?.rowId
-                        ? { ...row, [editingCell.columnId]: editValue || [] }
-                        : row
-                    );
-                    onUpdateTable({ ...table, rows: updatedRows });
-                    setEditingCell(null);
-                    setEditValue('');
-                    setSearchTerm('');
+                    // 中文註釋：多選欄位點擊「confirm」後，直接持久化保存，避免刷新後丟失
+                    saveEdit(); // 調用通用保存方法，內含本地更新 + 調用 API(onUpdateRow)
+                    toast.success('選項已更新'); // 中文註釋：保存成功時給出提示（沿用既有 toast 風格）
+                    setSearchTerm(''); // 僅重置本地搜尋狀態，不改動視覺樣式/佈局
                   }}
                 >
                   confirm
@@ -1203,22 +1202,13 @@ export function DataTable({
           return (
             <div className="w-full" onClick={(e) => e.stopPropagation()}>
               <Select 
-                // 确保值是字符串类型，修复类型错误
+                // 確保值是字符串類型，修復類型錯誤
                 value={typeof editValue === 'string' ? editValue : ''} 
                 onValueChange={(val) => {
+                  // 中文註釋：單選欄位變更後，先更新本地編輯值，再傳入覆蓋值以避免 setState 尚未生效導致未保存
                   setEditValue(val);
-                  // 立即更新數據並結束編輯
-                  if (editingCell) {
-                    const updatedRows: Row[] = table.rows.map(row =>
-                      row.id === editingCell.rowId
-                        ? { ...row, [editingCell.columnId]: val }
-                        : row
-                    );
-                    onUpdateTable({ ...table, rows: updatedRows });
-                    setEditingCell(null);
-                    setEditValue('');
-                    toast.success('選項已更新');
-                  }
+                  saveEdit(val); // 中文註釋：立即以當前選中值覆蓋保存，避免使用舊的 editValue
+                  toast.success('選項已更新');
                 }}
               >
                 <SelectTrigger className="h-8 w-full" onClick={(e) => e.stopPropagation()}>
@@ -1365,24 +1355,23 @@ export function DataTable({
           </div>
         );
       } else if (column.type === 'date' && value) {
-        // 处理日期类型，使用更友好的格式显示
+        // 处理日期类型，使用更友好的格式显示（到分鐘）
         try {
           const date = new Date(value);
           if (!isNaN(date.getTime())) {
-            // 格式化日期为 YYYY-MM-DD HH:mm:ss
+            // 格式化日期为 YYYY-MM-DD HH:mm
             const year = date.getFullYear();
             const month = String(date.getMonth() + 1).padStart(2, '0');
             const day = String(date.getDate()).padStart(2, '0');
             const hours = String(date.getHours()).padStart(2, '0');
             const minutes = String(date.getMinutes()).padStart(2, '0');
-            const seconds = String(date.getSeconds()).padStart(2, '0');
             
-            return <span className="text-sm">{`${year}-${month}-${day} ${hours}:${minutes}:${seconds}`}</span>;
+            return <span className="text-sm">{`${year}-${month}-${day} ${hours}:${minutes}`}</span>;
           }
         } catch (error) {
           console.error('Invalid date format:', error);
         }
-        // 如果日期无效，回退到简单替换T为空格
+        // 如果日期无效，回退到简单替换T为空格（仍可能含秒）
         return <span className="text-sm">{String(value).replace('T', ' ')}</span>;
       } else if (column.type === 'select' && column.options) {
         // 检查是否为多选模式
@@ -1623,6 +1612,7 @@ export function DataTable({
                                       [`${column.id}_start`]: e.target.value
                                     }))}
                                     className="h-10"
+                                    step={60}
                                   />
                                 </div>
                                 <div className="space-y-1">
@@ -1635,6 +1625,7 @@ export function DataTable({
                                       [`${column.id}_end`]: e.target.value
                                     }))}
                                     className="h-10"
+                                    step={60}
                                   />
                                 </div>
                               </div>
@@ -2039,6 +2030,87 @@ export function DataTable({
               </div>
             </DialogContent>
           </Dialog>
+
+          <Dialog open={!!configColumnId} onOpenChange={(open) => !open && cancelColumnConfig()}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>欄位設定</DialogTitle>
+              </DialogHeader>
+              {configForm && (
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="config-name">欄位名稱</Label>
+                    <Input
+                      id="config-name"
+                      value={configForm.name}
+                      onChange={(e) => setConfigForm({ ...configForm, name: e.target.value })}
+                      placeholder="輸入欄位名稱"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="config-type">資料類型</Label>
+                    <Select value={configForm.type} onValueChange={(value: Column['type']) => setConfigForm({ ...configForm, type: value })}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="text">文字</SelectItem>
+                        <SelectItem value="number">數字</SelectItem>
+                        <SelectItem value="date">日期</SelectItem>
+                        <SelectItem value="boolean">布林值</SelectItem>
+                        <SelectItem value="select">選項</SelectItem>
+                        <SelectItem value="file">檔案</SelectItem>
+                        <SelectItem value="url">網址連結</SelectItem>
+                        <SelectItem value="email">電子郵件</SelectItem>
+                        <SelectItem value="phone">電話號碼</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {configForm.type === 'select' && (
+                    <div>
+                      <Label>選項</Label>
+                      <div className="flex items-center gap-2 mt-2">
+                        <Checkbox 
+                          id="config-is-multi"
+                          checked={configForm.isMultiSelect}
+                          onCheckedChange={(checked) => setConfigForm({ ...configForm, isMultiSelect: !!checked })}
+                        />
+                        <Label htmlFor="config-is-multi" className="cursor-pointer">啟用多選模式</Label>
+                      </div>
+                      {configForm.options.map((option, index) => (
+                        <div key={index} className="flex gap-2 mt-2">
+                          <Input
+                            value={option}
+                            onChange={(e) => {
+                              const newOptions = [...configForm.options];
+                              newOptions[index] = e.target.value;
+                              setConfigForm({ ...configForm, options: newOptions });
+                            }}
+                            placeholder={`選項 ${index + 1}`}
+                          />
+                          <Button type="button" variant="outline" size="sm" onClick={() => {
+                            const newOptions = configForm.options.filter((_, i) => i !== index);
+                            setConfigForm({ ...configForm, options: newOptions.length ? newOptions : [''] });
+                          }}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                          {index === configForm.options.length - 1 && (
+                            <Button type="button" variant="outline" size="sm" onClick={() => setConfigForm({ ...configForm, options: [...configForm.options, ''] })}>
+                              <Plus className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2 pt-2">
+                    <Button onClick={cancelColumnConfig} variant="outline" className="flex-1">取消</Button>
+                    <Button onClick={saveColumnConfig} className="flex-1">保存</Button>
+                  </div>
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
         </div>
         
         <span className="text-sm text-muted-foreground">
@@ -2084,10 +2156,10 @@ export function DataTable({
                         sortConfig={sortConfig}
                         onSort={handleSort}
                         onDelete={deleteColumn}
-                        onUpdateColumn={updateColumn}
                         columnWidth={columnWidths[column.id]}
                         onResizeStart={handleResizeStart}
                         resizingColumn={resizingColumn}
+                        onOpenColumnConfig={openColumnConfig}
                       />
                     ))}
                   </SortableContext>

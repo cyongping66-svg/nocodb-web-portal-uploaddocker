@@ -129,7 +129,6 @@ export function useTables() {
         )
       )
       
-      toast.success('數據已添加')
       return { success: true, rowId: rowData.id } // 返回成功标志和行ID
     } catch (err) {
       console.error('Error creating row:', err)
@@ -163,7 +162,6 @@ export function useTables() {
         )
       )
       
-      toast.success('數據已更新')
       return { success: true } // 返回成功标志
     } catch (err) {
       console.error('Error updating row:', err)
