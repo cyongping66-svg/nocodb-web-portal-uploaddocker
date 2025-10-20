@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import apiService, { getApiOrigin } from '@/lib/api';
 import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Edit, Trash2, ArrowUp, ArrowDown, GripVertical, Link, File, Mail, Phone, Search, Filter, X, CheckSquare, Square, Download, Copy, Settings } from 'lucide-react';
+import { Plus, Edit, Trash2, ArrowUp, ArrowDown, GripVertical, Link, File, Mail, Phone, Search, Filter, X, CheckSquare, Square, Download, Copy, Settings, RotateCcw } from 'lucide-react';
 import { Table, Column, Row } from '@/types';
 import { toast } from 'sonner';
 import {
@@ -63,6 +63,7 @@ interface DataTableProps {
   onUpdateRow?: (tableId: string, rowId: string, rowData: any) => void;
   onDeleteRow?: (tableId: string, rowId: string) => void;
   onBatchUpdateRows?: (tableId: string, rows: any[]) => Promise<void>; // 中文注释：批量更新回調，用於選項同步
+  onSetLastOperation?: (op: { label: string; undo: () => Promise<void> } | null) => void; // 新增：向上傳遞可回滾操作
 }
 
 interface SortableHeaderProps {
@@ -203,13 +204,20 @@ export function DataTable({
   onCreateRow, 
   onUpdateRow, 
   onDeleteRow, 
-  onBatchUpdateRows 
+  onBatchUpdateRows,
+  onSetLastOperation,
 }: DataTableProps) {
   // 直接使用原始的onUpdateTable函数，不再使用localStorage
   const onUpdateTable = (updatedTable: Table) => {
     // 调用原始的onUpdateTable函数
     originalOnUpdateTable(updatedTable);
   };
+  
+  // 追蹤最新的表格狀態，用於回滾時獲取當前 rows/columns
+  const latestTableRef = useRef<Table>(table);
+  useEffect(() => {
+    latestTableRef.current = table;
+  }, [table]);
   
   // 辅助函数：根据列类型转换数据值
   const convertValueByColumnType = (value: any, columnType: Column['type']): any => {
@@ -401,15 +409,18 @@ export function DataTable({
 
     // 中文註釋：提取實際變更的行，用於批量持久化。需使用完整行數據以避免覆蓋其他欄位
     const changedRowsFull: Row[] = [];
+    const prevChangedRowsFull: Row[] = []; // 新增：保存變更前的行快照以便回滾
     for (let i = 0; i < table.rows.length; i++) {
       const before = table.rows[i];
       const after = updatedRows[i];
       if (JSON.stringify(before) !== JSON.stringify(after)) {
         changedRowsFull.push(after);
+        prevChangedRowsFull.push(before);
       }
     }
 
     // 中文註釋：先更新本地表格視圖（欄位結構 + 行值同步），提供即時反饋
+    const prevColumns = table.columns; // 新增：保存變更前的欄位結構以便回滾
     onUpdateTable({ ...table, columns: updatedColumns, rows: updatedRows });
 
     // 中文註釋：後端批量持久化（若不可用則逐行更新或僅本地更新）
@@ -421,6 +432,28 @@ export function DataTable({
           await onUpdateRow(table.id, r.id, r);
         }
       }
+      // 新增：設置可回滾的最後一次操作（欄位設定變更）
+      onSetLastOperation?.({
+        label: '欄位設定變更',
+        undo: async () => {
+          try {
+            // 回滾欄位結構
+            onUpdateTable({ ...table, columns: prevColumns });
+            // 回滾行值（使用批量或逐行）
+            if (onBatchUpdateRows && prevChangedRowsFull.length > 0) {
+              await onBatchUpdateRows(table.id, prevChangedRowsFull);
+            } else if (onUpdateRow && prevChangedRowsFull.length > 0) {
+              for (const r of prevChangedRowsFull) {
+                await onUpdateRow(table.id, r.id, r);
+              }
+            }
+            toast.success('已回滾欄位設定至上次操作前狀態');
+          } catch (e) {
+            console.error('回滾欄位設定失敗:', e);
+            toast.error('回滾欄位設定失敗');
+          }
+        }
+      });
     } catch (err) {
       console.error('批量持久化失敗:', err);
       toast.error('批量持久化失敗，已回退變更');
@@ -605,6 +638,7 @@ export function DataTable({
       const oldIndex = table.columns.findIndex(col => col.id === active.id);
       const newIndex = table.columns.findIndex(col => col.id === over?.id);
 
+      const prevColumns = table.columns;
       const newColumns = arrayMove(table.columns, oldIndex, newIndex);
       
       onUpdateTable({
@@ -613,6 +647,22 @@ export function DataTable({
       });
       
       toast.success('欄位順序已更新');
+
+      // 註冊回滾：還原拖曳前的欄位順序
+      onSetLastOperation?.({
+        label: '欄位順序調整',
+        undo: async () => {
+          try {
+            const current = latestTableRef.current;
+            onUpdateTable({ ...current, columns: prevColumns });
+            toast.success('已回滾欄位順序調整');
+          } catch (e) {
+            console.error('回滾欄位順序調整失敗:', e);
+            toast.error('回滾欄位順序調整失敗');
+          }
+        },
+        source: '表格視圖'
+      });
     }
   };
 
@@ -631,9 +681,30 @@ export function DataTable({
       isMultiSelect: newColumn.type === 'select' ? newColumn.isMultiSelect : undefined
     };
 
+    // 本地更新：新增欄位
     onUpdateTable({
       ...table,
       columns: [...table.columns, column]
+    });
+
+    // 註冊回滾：移除剛新增的欄位，並從行中刪除其值（僅影響該欄位，不影響其他欄位）
+    onSetLastOperation?.({
+      label: '新增欄位',
+      undo: async () => {
+        try {
+          const current = latestTableRef.current;
+          const revertedColumns = current.columns.filter(c => c.id !== column.id);
+          const revertedRows: Row[] = current.rows.map((row) => {
+            const { [column.id]: removed, ...rest } = row as any;
+            return rest as Row;
+          });
+          onUpdateTable({ ...current, columns: revertedColumns, rows: revertedRows });
+          toast.success('已回滾欄位新增');
+        } catch (e) {
+          console.error('回滾欄位新增失敗:', e);
+          toast.error('回滾欄位新增失敗');
+        }
+      }
     });
 
     // 添加isMultiSelect属性，修复类型错误
@@ -645,6 +716,16 @@ export function DataTable({
   // 已移除表格視圖的欄位名稱編輯功能
 
   const deleteColumn = (columnId: string) => {
+    const deletedIndex = table.columns.findIndex(col => col.id === columnId);
+    const deletedColumn = table.columns.find(col => col.id === columnId);
+    if (!deletedColumn) return;
+
+    // 快照刪除前的欄位值（僅保存被刪欄位的各行原值，用於回滾）
+    const deletedValuesByRowId: Record<string, any> = {};
+    for (const row of table.rows) {
+      deletedValuesByRowId[row.id] = (row as any)[columnId];
+    }
+
     const updatedColumns = table.columns.filter(col => col.id !== columnId);
     const updatedRows: Row[] = table.rows.map(row => {
       const { [columnId]: deleted, ...rest } = row;
@@ -656,6 +737,31 @@ export function DataTable({
       columns: updatedColumns,
       rows: updatedRows
     });
+
+    // 註冊回滾：復原刪除的欄位至原位置，並恢復各行對應值
+    onSetLastOperation?.({
+      label: '刪除欄位',
+      undo: async () => {
+        try {
+          const current = latestTableRef.current;
+          const revertedColumns = [...current.columns];
+          const insertIndex = Math.min(Math.max(deletedIndex, 0), revertedColumns.length);
+          if (!revertedColumns.some(c => c.id === deletedColumn.id)) {
+            revertedColumns.splice(insertIndex, 0, deletedColumn);
+          }
+          const revertedRows: Row[] = current.rows.map(row => {
+            const value = deletedValuesByRowId[row.id];
+            return { ...row, [deletedColumn.id]: value } as Row;
+          });
+          onUpdateTable({ ...current, columns: revertedColumns, rows: revertedRows });
+          toast.success('已回滾欄位刪除');
+        } catch (e) {
+          console.error('回滾欄位刪除失敗:', e);
+          toast.error('回滾欄位刪除失敗');
+        }
+      }
+    });
+
     toast.success('欄位刪除成功');
   };
 
@@ -705,6 +811,23 @@ export function DataTable({
         await onCreateRow(table.id, newRow);
       }
       toast.success('成功新增行');
+
+      // 註冊回滾：移除剛新增的行
+      onSetLastOperation?.({
+        label: '新增行',
+        undo: async () => {
+          try {
+            const current = latestTableRef.current;
+            const rows = current.rows.filter(r => r.id !== newRow.id);
+            onUpdateTable({ ...current, rows });
+            toast.success('已回滾新增行');
+          } catch (e) {
+            console.error('回滾新增行失敗:', e);
+            toast.error('回滾新增行失敗');
+          }
+        },
+        source: '表格視圖'
+      });
     } catch (err) {
       console.error('保存當前資料失敗', err);
       toast.error('保存當前資料失敗');
@@ -712,6 +835,10 @@ export function DataTable({
   };
 
   const deleteRow = (rowId: string) => {
+    // 快照：被刪除行與其位置
+    const deletedIndex = table.rows.findIndex(r => r.id === rowId);
+    const deletedRow = table.rows.find(r => r.id === rowId);
+
     // 如果有 API 方法，使用 API；否則使用本地更新
     if (onDeleteRow) {
       onDeleteRow(table.id, rowId);
@@ -719,6 +846,29 @@ export function DataTable({
       onUpdateTable({
         ...table,
         rows: table.rows.filter(row => row.id !== rowId)
+      });
+    }
+
+    // 註冊回滾：復原刪除的行（盡量回到原位置）
+    if (deletedRow) {
+      onSetLastOperation?.({
+        label: '刪除行',
+        undo: async () => {
+          try {
+            const current = latestTableRef.current;
+            const rows = [...current.rows];
+            const insertIndex = Math.min(Math.max(deletedIndex, 0), rows.length);
+            if (!rows.some(r => r.id === deletedRow.id)) {
+              rows.splice(insertIndex, 0, deletedRow);
+            }
+            onUpdateTable({ ...current, rows });
+            toast.success('已回滾刪除行');
+          } catch (e) {
+            console.error('回滾刪除行失敗:', e);
+            toast.error('回滾刪除行失敗');
+          }
+        },
+        source: '表格視圖'
       });
     }
   };
@@ -817,6 +967,10 @@ export function DataTable({
     // 獲取要更新的行
     const rowToUpdate = table.rows.find(row => row.id === editingCell.rowId);
     if (!rowToUpdate) return;
+    // 新增：保存回滾需要的上下文
+    const prevRowId = editingCell.rowId;
+    const prevColumnId = editingCell.columnId;
+    const prevValue = rowToUpdate[prevColumnId];
 
     const updatedRowData = {
       ...rowToUpdate,
@@ -831,6 +985,29 @@ export function DataTable({
         : row
     );
     onUpdateTable({ ...table, rows: updatedRows });
+
+    // 新增：設置可回滾的最後一次操作（單元格編輯）
+    onSetLastOperation?.({
+      label: '單元格編輯',
+      undo: async () => {
+        try {
+          const current = latestTableRef.current;
+          if (onUpdateRow) {
+            await onUpdateRow(current.id, prevRowId, { [prevColumnId]: prevValue });
+          } else {
+            const revertRows = current.rows.map(r =>
+              r.id === prevRowId ? { ...r, [prevColumnId]: prevValue } : r
+            );
+            onUpdateTable({ ...current, rows: revertRows });
+          }
+          toast.success('已回滾單元格編輯');
+        } catch (e) {
+          console.error('回滾單元格編輯失敗:', e);
+          toast.error('回滾單元格編輯失敗');
+        }
+      },
+      source: '表格視圖'
+    });
 
     // 如果有API方法，调用它进行数据持久化
     if (onUpdateRow) {
@@ -942,6 +1119,9 @@ export function DataTable({
       return;
     }
 
+    // 新增：記錄刪除前的行資料以便回滾
+    const rowsToDelete = table.rows.filter(row => selectedRows.has(row.id));
+
     try {
       // 优先使用API进行批量删除
       if (onDeleteRow) {
@@ -956,7 +1136,27 @@ export function DataTable({
         onUpdateTable({ ...table, rows: updatedRows });
       }
       setSelectedRows(new Set());
-      toast.success(`已刪除 ${selectedRows.size} 筆資料`);
+      toast.success(`已刪除 ${rowsToDelete.length} 筆資料`);
+
+      // 新增：設置可回滾的最後一次操作（批量刪除）
+      onSetLastOperation?.({
+        label: '批量刪除',
+        undo: async () => {
+          try {
+            if (onCreateRow) {
+              for (const r of rowsToDelete) {
+                await onCreateRow(table.id, r);
+              }
+            } else {
+              onUpdateTable({ ...table, rows: [...table.rows, ...rowsToDelete] });
+            }
+            toast.success('已回滾批量刪除');
+          } catch (e) {
+            console.error('回滾批量刪除失敗:', e);
+            toast.error('回滾批量刪除失敗');
+          }
+        }
+      });
     } catch (error) {
       console.error('批量删除失败:', error);
       toast.error('批量删除操作失败');
@@ -984,11 +1184,20 @@ export function DataTable({
     }
 
     try {
+      // 先拍快照：記錄所選行在該欄位的原始值，供回滾使用
+      const selectedIds = Array.from(selectedRows);
+      const revertMap: Record<string, any> = {};
+      for (const row of table.rows) {
+        if (selectedRows.has(row.id)) {
+          revertMap[row.id] = row[batchEditColumn];
+        }
+      }
+
       // 优先使用API进行批量更新
       if (onUpdateRow) {
         const fieldData = { [batchEditColumn]: processedValue };
         // 循环更新每一行
-        const updatePromises = Array.from(selectedRows).map(rowId => 
+        const updatePromises = selectedIds.map(rowId => 
           onUpdateRow(table.id, rowId, fieldData)
         );
         await Promise.all(updatePromises);
@@ -1005,7 +1214,38 @@ export function DataTable({
       setBatchEditColumn('');
       setBatchEditValue('');
       setIsBatchEditOpen(false);
-      toast.success(`已更新 ${selectedRows.size} 筆資料`);
+      toast.success(`已更新 ${selectedIds.length} 筆資料`);
+
+      // 註冊回滾：批量編輯
+      onSetLastOperation?.({
+        label: `批量編輯（欄位：${batchEditColumn}，筆數：${selectedIds.length}）`,
+        undo: async () => {
+          try {
+            const currentTable = latestTableRef.current || table;
+            if (onUpdateRow) {
+              // 使用API逐筆回滾
+              const revertPromises = selectedIds.map(rowId => {
+                const originalValue = revertMap[rowId];
+                return onUpdateRow(currentTable.id, rowId, { [batchEditColumn]: originalValue });
+              });
+              await Promise.all(revertPromises);
+            } else {
+              // 本地回滾
+              const revertedRows: Row[] = currentTable.rows.map(row =>
+                selectedIds.includes(row.id)
+                  ? { ...row, [batchEditColumn]: revertMap[row.id] }
+                  : row
+              );
+              onUpdateTable({ ...currentTable, rows: revertedRows });
+            }
+            toast.success('已回滾批量編輯');
+          } catch (err) {
+            console.error('批量編輯回滾失敗:', err);
+            toast.error('批量編輯回滾失敗');
+          }
+        },
+        source: '表格視圖',
+      });
     } catch (error) {
       console.error('批量更新失败:', error);
       toast.error('批量更新操作失败');
@@ -1088,6 +1328,27 @@ export function DataTable({
 
       setSelectedRows(new Set());
       toast.success(`已複製 ${selectedRowsData.length} 筆資料`);
+
+      // 新增：設置可回滾的最後一次操作（批量複製）
+      onSetLastOperation?.({
+        label: '批量複製',
+        undo: async () => {
+          try {
+            if (onDeleteRow) {
+              for (const r of duplicatedRows) {
+                await onDeleteRow(table.id, r.id);
+              }
+            } else {
+              const remaining = table.rows.filter(r => !duplicatedRows.some(d => d.id === r.id));
+              onUpdateTable({ ...table, rows: remaining });
+            }
+            toast.success('已回滾批量複製');
+          } catch (e) {
+            console.error('回滾批量複製失敗:', e);
+            toast.error('回滾批量複製失敗');
+          }
+        }
+      });
     } catch (error) {
       console.error('批量复制失败:', error);
       toast.error('批量复制操作失败');
@@ -2057,9 +2318,9 @@ export function DataTable({
                 </Button>
 
                 <Button variant="destructive" size="sm" onClick={batchDelete}>
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  刪除選中
-                </Button>
+                   <Trash2 className="w-4 h-4 mr-2" />
+                   刪除選中
+                 </Button>
               </div>
             </div>
             <Button 

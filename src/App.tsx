@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { useTables } from '@/hooks/use-tables';
 import { Button } from '@/components/ui/button';
@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Table as TableIcon, Grid3X3, Download, Menu, X } from 'lucide-react';
+import { Plus, Table as TableIcon, Grid3X3, Download, Menu, X, RotateCcw } from 'lucide-react';
 import { toast, Toaster } from 'sonner';
 import { Table, ViewMode } from '@/types';
 import { TableManager } from '@/components/TableManager';
@@ -36,7 +36,27 @@ function App() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isMobileView, setIsMobileView] = useState(false);
+  // 新增：全域可回滾堆疊（支持連續回滾）
+  const [undoStack, setUndoStack] = useState<Array<{ label: string; undo: () => Promise<void>; timestamp?: number; source?: string }>>([]);
+  // 追蹤最新的 tables 狀態以便在回滾時取得最新資料
+  const latestTablesRef = useRef<Table[] | null>(tables || null);
+  useEffect(() => {
+    latestTablesRef.current = tables || null;
+  }, [tables]);
 
+  // 相對時間格式（中文）：將毫秒時間戳轉為「x 分鐘前 / x 秒前 / x 小時前」
+  const formatRelativeTime = (ts?: number) => {
+    if (!ts) return '';
+    const diffMs = Date.now() - ts;
+    const sec = Math.floor(diffMs / 1000);
+    if (sec < 60) return `${sec} 秒前`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min} 分鐘前`;
+    const hour = Math.floor(min / 60);
+    if (hour < 24) return `${hour} 小時前`;
+    const day = Math.floor(hour / 24);
+    return `${day} 天前`;
+  };
   // 检测屏幕尺寸变化，设置移动视图状态
   useEffect(() => {
     const handleResize = () => {
@@ -97,6 +117,10 @@ function App() {
 
   const updateTable = async (updatedTable: Table) => {
     try {
+      // 取得更新前的表格（用於判斷是否為改名操作）
+      const prevTable = (tables || []).find(t => t.id === updatedTable.id);
+      const prevName = prevTable?.name;
+
       // 使用 hook 中的 updateTable 方法
       if (updateTableInDB) {
         await updateTableInDB(updatedTable);
@@ -107,6 +131,35 @@ function App() {
             table.id === updatedTable.id ? updatedTable : table
           ) : [updatedTable]
         );
+      }
+
+      // 若為表格名稱修改，註冊回滾操作
+      if (prevName && updatedTable.name !== prevName) {
+        setUndoStack(prev => [
+          ...prev,
+          {
+            label: '子表名稱更新',
+            undo: async () => {
+              try {
+                const currentTables = latestTablesRef.current || [];
+                const current = currentTables.find(t => t.id === updatedTable.id);
+                if (!current) return;
+                const reverted = { ...current, name: prevName };
+                if (updateTableInDB) {
+                  await updateTableInDB(reverted);
+                } else {
+                  await setTables(ct =>
+                    (ct || []).map(t => (t.id === reverted.id ? reverted : t))
+                  );
+                }
+                toast.success('已回滾子表名稱修改');
+              } catch (e) {
+                console.error('回滾子表名稱失敗:', e);
+                toast.error('回滾子表名稱失敗');
+              }
+            }
+          }
+        ]);
       }
     } catch (error) {
       console.error('Error updating table:', error);
@@ -266,20 +319,61 @@ function App() {
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-semibold text-foreground">{activeTable.name}</h2>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" onClick={exportData}>
-                      <Download className="w-4 h-4 mr-2" />
-                      匯出
+                    {undoStack.length > 0 && (() => {
+                      const lastOp = undoStack[undoStack.length - 1];
+                      const rel = formatRelativeTime(lastOp.timestamp);
+                      const src = lastOp.source ? `${lastOp.source} · ` : '';
+                      const rawLabel = lastOp.label || '';
+                      // 1) 移除徽章內的欄位名稱（刪除括號中的內容，包含全形/半形）
+                      let displayLabel = rawLabel.replace(/[（(][^）)]*[）)]/g, '').trim();
+                      // 2) 若標籤已包含來源前綴（如「卡片視圖：」「表格視圖：」），移除重複前綴
+                      if (lastOp.source) {
+                        const prefixRegex = new RegExp(`^${lastOp.source}\\s*[：:]\\s*`);
+                        displayLabel = displayLabel.replace(prefixRegex, '').trim();
+                      }
+                      return (
+                        <span className="inline-flex items-center rounded-full border border-muted/30 bg-muted text-muted-foreground px-2 py-0.5 text-xs font-medium">
+                          最近操作：{src}{displayLabel}{rel ? ` · ${rel}` : ''}
+                        </span>
+                      );
+                    })()}
+                    <Button
+                      variant="default"
+                      size="sm"
+                      disabled={undoStack.length === 0}
+                      onClick={async () => {
+                        if (undoStack.length === 0) {
+                          toast.error('暫無可回滾的操作');
+                          return;
+                        }
+                        const lastOp = undoStack[undoStack.length - 1];
+                        try {
+                          await lastOp.undo();
+                          setUndoStack(prev => prev.slice(0, -1));
+                        } catch (e) {
+                          console.error('回滾失敗:', e);
+                          toast.error('回滾操作失敗');
+                        }
+                      }}
+                    >
+                      <RotateCcw className="w-4 h-4 mr-2" />
+                      回滾上次操作
                     </Button>
-                    <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as ViewMode)}>
-                      <TabsList>
-                        <TabsTrigger value="grid">
-                          <TableIcon className="w-4 h-4" />
-                        </TabsTrigger>
-                        <TabsTrigger value="card">
-                          <Grid3X3 className="w-4 h-4" />
-                        </TabsTrigger>
-                      </TabsList>
-                    </Tabs>
+  
+                       <Button variant="outline" size="sm" onClick={exportData}>
+                         <Download className="w-4 h-4 mr-2" />
+                         匯出
+                       </Button>
+                       <Tabs value={viewMode} onValueChange={(value) => setViewMode(value as ViewMode)}>
+                         <TabsList>
+                           <TabsTrigger value="grid">
+                             <TableIcon className="w-4 h-4" />
+                           </TabsTrigger>
+                           <TabsTrigger value="card">
+                             <Grid3X3 className="w-4 h-4" />
+                           </TabsTrigger>
+                         </TabsList>
+                       </Tabs>
                   </div>
                 </div>
               </div>
@@ -295,10 +389,21 @@ function App() {
                       onUpdateRow={updateRow}
                       onDeleteRow={deleteRow}
                       onBatchUpdateRows={batchUpdateRows} // 中文注释：传入批量更新回调，用于选项同步持久化
+                      // 新增：接收子組件註冊的回滾操作（推入堆疊，附時間戳）
+                      onSetLastOperation={(op) => {
+                        if (op) setUndoStack(prev => [...prev, { ...op, source: '表格視圖', timestamp: Date.now() }]);
+                      }}
                     />
                   </div>
                 ) : (
-                  <CardView table={activeTable} onUpdateTable={updateTable} />
+                  <CardView 
+                    table={activeTable} 
+                    onUpdateTable={updateTable}
+                    // 新增：接收卡片視圖的回滾註冊並標註來源
+                    onSetLastOperation={(op) => {
+                      if (op) setUndoStack(prev => [...prev, { ...op, source: '卡片視圖', timestamp: Date.now() }]);
+                    }}
+                  />
                 )}
               </div>
             </>

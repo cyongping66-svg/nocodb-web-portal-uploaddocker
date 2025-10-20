@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -59,14 +59,21 @@ const getOptionColor = (option: any, index: number = 0) => {
 interface CardViewProps {
   table: Table;
   onUpdateTable: (table: Table) => void;
+  onSetLastOperation?: (op: { label: string; undo: () => Promise<void> } | null) => void;
 }
 
-export function CardView({ table, onUpdateTable: originalOnUpdateTable }: CardViewProps) {
+export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLastOperation }: CardViewProps) {
   // 直接使用原始的onUpdateTable函数，不再使用localStorage
   const onUpdateTable = (updatedTable: Table) => {
     // 调用原始的onUpdateTable函数
     originalOnUpdateTable(updatedTable);
   };
+  
+  // 追蹤最新的表格狀態，用於回滾操作避免閉包過期
+  const latestTableRef = useRef<Table>(table);
+  useEffect(() => {
+    latestTableRef.current = table;
+  }, [table]);
   
   const [editingRow, setEditingRow] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Record<string, any>>({});
@@ -88,14 +95,43 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable }: CardVi
   const saveEdit = () => {
     if (!editingRow) return;
 
+    // 快照：更新前的整行資料
+    const prevRow = table.rows.find(r => r.id === editingRow);
+    if (!prevRow) return;
+
     const updatedRows: Row[] = table.rows.map(row =>
       row.id === editingRow ? { ...editValues } as Row : row
     );
 
     onUpdateTable({ ...table, rows: updatedRows });
+
+    // 計算本次修改的欄位差異（用於回滾僅還原變更欄位）
+    const changedKeys = Object.keys(editValues).filter(k => (prevRow as any)[k] !== (editValues as any)[k]);
+    const revertPatch: Record<string, any> = {};
+    for (const key of changedKeys) revertPatch[key] = (prevRow as any)[key];
+
     setEditingRow(null);
     setEditValues({});
     toast.success('行更新成功');
+
+    // 註冊回滾：僅還原本次修改的欄位
+    onSetLastOperation?.({
+      label: '卡片視圖：行更新',
+      undo: async () => {
+        try {
+          const current = latestTableRef.current;
+          const revertRows = current.rows.map(r => (
+            r.id === prevRow.id ? { ...r, ...revertPatch } : r
+          ));
+          onUpdateTable({ ...current, rows: revertRows });
+          toast.success('已回滾卡片視圖行更新');
+        } catch (e) {
+          console.error('回滾卡片視圖行更新失敗:', e);
+          toast.error('回滾卡片視圖行更新失敗');
+        }
+      },
+      source: '卡片視圖',
+    });
   };
 
   const cancelEdit = () => {
@@ -104,11 +140,37 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable }: CardVi
   };
 
   const deleteRow = (rowId: string) => {
+    // 快照：被刪除行與其位置
+    const deletedIndex = table.rows.findIndex(r => r.id === rowId);
+    const deletedRow = table.rows.find(r => r.id === rowId);
+
     onUpdateTable({
       ...table,
       rows: table.rows.filter(row => row.id !== rowId)
     });
     toast.success('行刪除成功');
+
+    if (deletedRow) {
+      onSetLastOperation?.({
+        label: '卡片視圖：刪除行',
+        undo: async () => {
+          try {
+            const current = latestTableRef.current;
+            const rows = [...current.rows];
+            const insertIndex = Math.min(Math.max(deletedIndex, 0), rows.length);
+            if (!rows.some(r => r.id === deletedRow.id)) {
+              rows.splice(insertIndex, 0, deletedRow);
+            }
+            onUpdateTable({ ...current, rows });
+            toast.success('已回滾卡片視圖刪除行');
+          } catch (e) {
+            console.error('回滾卡片視圖刪除行失敗:', e);
+            toast.error('回滾卡片視圖刪除行失敗');
+          }
+        },
+        source: '卡片視圖'
+      });
+    }
   };
 
   const addNewRow = () => {
@@ -151,19 +213,23 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable }: CardVi
     setNewRowValues({});
     setIsAddRowOpen(false);
     toast.success('行新增成功');
-  };
 
-  const handleFileUpload = (file: File, onChange: (value: any) => void) => {
-    const fileUrl = URL.createObjectURL(file);
-    const fileData = {
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      url: fileUrl,
-      lastModified: file.lastModified
-    };
-    onChange(fileData);
-    toast.success('檔案上傳成功');
+    // 註冊回滾：移除剛新增的行
+    onSetLastOperation?.({
+      label: '卡片視圖：新增行',
+      undo: async () => {
+        try {
+          const current = latestTableRef.current;
+          const rows = current.rows.filter(r => r.id !== newRow.id);
+          onUpdateTable({ ...current, rows });
+          toast.success('已回滾卡片視圖新增行');
+        } catch (e) {
+          console.error('回滾卡片視圖新增行失敗:', e);
+          toast.error('回滾卡片視圖新增行失敗');
+        }
+      },
+      source: '卡片視圖',
+    });
   };
 
   const clearFilters = () => {
@@ -196,10 +262,29 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable }: CardVi
       return;
     }
 
+    // 快照：刪除前的行資料
+    const rowsToDelete = table.rows.filter(row => selectedRows.has(row.id));
+
     const updatedRows: Row[] = table.rows.filter(row => !selectedRows.has(row.id));
     onUpdateTable({ ...table, rows: updatedRows });
     setSelectedRows(new Set());
-    toast.success(`已刪除 ${selectedRows.size} 筆資料`);
+    toast.success(`已刪除 ${rowsToDelete.length} 筆資料`);
+
+    onSetLastOperation?.({
+      label: '卡片視圖：批量刪除',
+      undo: async () => {
+        try {
+          const current = latestTableRef.current;
+          const rows = [...current.rows, ...rowsToDelete];
+          onUpdateTable({ ...current, rows });
+          toast.success('已回滾卡片視圖批量刪除');
+        } catch (e) {
+          console.error('回滾卡片視圖批量刪除失敗:', e);
+          toast.error('回滾卡片視圖批量刪除失敗');
+        }
+      },
+      source: '卡片視圖',
+    });
   };
 
   const batchEdit = () => {
@@ -228,12 +313,40 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable }: CardVi
         : row
     );
 
+    // 快照：回滾需要的原始值集合 + 選擇的ID
+    const revertMap: Record<string, any> = {};
+    for (const r of table.rows) {
+      if (selectedRows.has(r.id)) revertMap[r.id] = r[batchEditColumn];
+    }
+    const selectedIds = Array.from(selectedRows);
+
     onUpdateTable({ ...table, rows: updatedRows });
     setSelectedRows(new Set());
     setBatchEditColumn('');
     setBatchEditValue('');
     setIsBatchEditOpen(false);
-    toast.success(`已更新 ${selectedRows.size} 筆資料`);
+    toast.success(`已更新 ${selectedIds.length} 筆資料`);
+
+    // 註冊回滾：恢復批量編輯前值（僅還原選中行的該欄位）
+    onSetLastOperation?.({
+      label: '卡片視圖：批量編輯',
+      undo: async () => {
+        try {
+          const current = latestTableRef.current;
+          const rows = current.rows.map(r =>
+            selectedIds.includes(r.id) && Object.prototype.hasOwnProperty.call(revertMap, r.id)
+              ? { ...r, [batchEditColumn]: revertMap[r.id] }
+              : r
+          );
+          onUpdateTable({ ...current, rows });
+          toast.success('已回滾卡片視圖批量編輯');
+        } catch (e) {
+          console.error('回滾卡片視圖批量編輯失敗:', e);
+          toast.error('回滾卡片視圖批量編輯失敗');
+        }
+      },
+      source: '卡片視圖'
+    });
   };
 
   const batchExport = () => {
