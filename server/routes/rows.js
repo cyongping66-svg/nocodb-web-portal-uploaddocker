@@ -247,8 +247,37 @@ router.post('/:tableId/rows/batch', (req, res) => {
         });
       break;
 
+    case 'update':
+      // 批量更新（新增）
+      if (!rows || !Array.isArray(rows)) {
+        return res.status(400).json({ error: 'rows array is required for update operation' });
+      }
+
+      const updatePromises = rows.map(rowData => {
+        return new Promise((resolve, reject) => {
+          // 确保每条更新数据都带有 id（中文注释：批量更新要求每行必须有唯一ID）
+          if (!rowData || !rowData.id) {
+            return reject(new Error('Row id is required'));
+          }
+          db.updateRow(rowData.id, rowData, (err) => {
+            if (err) reject(err);
+            else resolve(rowData.id);
+          });
+        });
+      });
+
+      Promise.all(updatePromises)
+        .then(() => {
+          res.json({ message: `${rows.length} rows updated successfully` });
+        })
+        .catch(err => {
+          console.error('Error in batch update:', err);
+          res.status(500).json({ error: 'Failed to update rows' });
+        });
+      break;
+
     default:
-      res.status(400).json({ error: 'Invalid operation. Supported: create, delete' });
+      res.status(400).json({ error: 'Invalid operation. Supported: create, delete, update' });
   }
 });
 

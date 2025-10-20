@@ -138,10 +138,11 @@ class ApiService {
     });
   }
 
-  async batchUpdateRows(tableId, operations) {
+  async batchUpdateRows(tableId, rows) {
+    // 中文注释：批量更新使用同一批量接口，operation 指定為 'update'
     return this.request(`/tables/${tableId}/rows/batch`, {
       method: 'POST',
-      body: JSON.stringify({ operations }),
+      body: JSON.stringify({ operation: 'update', rows }),
     });
   }
 

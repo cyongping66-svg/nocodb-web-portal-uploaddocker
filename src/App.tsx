@@ -294,6 +294,7 @@ function App() {
                       onCreateRow={createRow}
                       onUpdateRow={updateRow}
                       onDeleteRow={deleteRow}
+                      onBatchUpdateRows={batchUpdateRows} // 中文注释：传入批量更新回调，用于选项同步持久化
                     />
                   </div>
                 ) : (

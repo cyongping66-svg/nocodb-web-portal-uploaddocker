@@ -62,6 +62,7 @@ interface DataTableProps {
   onCreateRow?: (tableId: string, rowData: any) => void;
   onUpdateRow?: (tableId: string, rowId: string, rowData: any) => void;
   onDeleteRow?: (tableId: string, rowId: string) => void;
+  onBatchUpdateRows?: (tableId: string, rows: any[]) => Promise<void>; // 中文注释：批量更新回調，用於選項同步
 }
 
 interface SortableHeaderProps {
@@ -201,7 +202,8 @@ export function DataTable({
   onUpdateTable: originalOnUpdateTable, 
   onCreateRow, 
   onUpdateRow, 
-  onDeleteRow 
+  onDeleteRow, 
+  onBatchUpdateRows 
 }: DataTableProps) {
   // 直接使用原始的onUpdateTable函数，不再使用localStorage
   const onUpdateTable = (updatedTable: Table) => {
@@ -277,8 +279,10 @@ export function DataTable({
     });
   };
 
-  const saveColumnConfig = () => {
+  const saveColumnConfig = async () => {
     if (!configColumnId || !configForm) return;
+
+    // 中文註釋：先構造更新後的欄位定義（包含名稱、類型、選項、是否多選）
     const updatedColumns = table.columns.map(col =>
       col.id === configColumnId
         ? {
@@ -290,7 +294,142 @@ export function DataTable({
           }
         : col
     );
-    onUpdateTable({ ...table, columns: updatedColumns });
+
+    // 中文註釋：僅當欄位為下拉選擇（單選或多選）時，才執行選項同步邏輯
+    const targetOldColumn = table.columns.find(c => c.id === configColumnId);
+    const isSelectType = targetOldColumn?.type === 'select';
+    const oldOptions: string[] = Array.isArray(targetOldColumn?.options) ? (targetOldColumn?.options as string[]) : [];
+    const newOptions: string[] = configForm.type === 'select' ? configForm.options.filter(o => o.trim()) : [];
+
+    // 中文註釋：位置對齊映射（方案 A）——舊選項第 i 項映射到新選項第 i 項
+    const renameMap: Record<string, string> = {};
+    const minLen = Math.min(oldOptions.length, newOptions.length);
+    for (let i = 0; i < minLen; i++) {
+      const oldOpt = oldOptions[i];
+      const newOpt = newOptions[i];
+      if (oldOpt !== newOpt) {
+        renameMap[oldOpt] = newOpt;
+      }
+    }
+
+    // 中文註釋：刪除的選項（位置對齊視角）——舊選項中超出新選項長度的尾部項視為刪除
+    const deletedOptions: string[] = [];
+    for (let i = newOptions.length; i < oldOptions.length; i++) {
+      deletedOptions.push(oldOptions[i]);
+    }
+
+    // 中文註釋：若存在刪除項，且表格中存在對應引用，提示刪除確認
+    let hasDeletedReferences = false;
+    if (isSelectType && deletedOptions.length > 0) {
+      const targetNewColumn = updatedColumns.find(c => c.id === configColumnId);
+      const isMultiSelect = !!targetNewColumn?.isMultiSelect;
+      for (const row of table.rows) {
+        const v = (row as any)[configColumnId];
+        if (isMultiSelect) {
+          const arr = Array.isArray(v) ? v : (typeof v === 'string' && v !== '' ? [v] : []);
+          if (arr.some(x => deletedOptions.includes(x))) {
+            hasDeletedReferences = true;
+            break;
+          }
+        } else {
+          if (typeof v === 'string' && deletedOptions.includes(v)) {
+            hasDeletedReferences = true;
+            break;
+          }
+        }
+      }
+    }
+
+    if (hasDeletedReferences) {
+      // 中文註釋：僅對「單選」保留保存時確認；多選不再彈窗
+      const targetNewColumnConfirm = updatedColumns.find(c => c.id === configColumnId);
+      const isMultiSelectConfirm = !!targetNewColumnConfirm?.isMultiSelect;
+      if (!isMultiSelectConfirm) {
+        const ok = window.confirm('删除后表格中已维护的相关值将被清空，是否继续执行删除操作');
+        if (!ok) {
+          // 中文註釋：用戶取消刪除，同步流程中止，不保存配置
+          return;
+        }
+      }
+    }
+
+    // 中文註釋：構造行數據的更新（僅在 select 類型時進行）
+    const targetNewColumn = updatedColumns.find(c => c.id === configColumnId);
+    const isMultiSelect = !!targetNewColumn?.isMultiSelect;
+
+    const updatedRows: Row[] = table.rows.map(row => {
+      if (!isSelectType) return row;
+      const currentVal: any = (row as any)[configColumnId];
+      let changed = false;
+
+      if (isMultiSelect) {
+        // 中文註釋：多選刪除採用“僅移除被刪選項、保留其他選擇”，並套用重命名映射
+        const arr = Array.isArray(currentVal)
+          ? currentVal
+          : (typeof currentVal === 'string' && currentVal !== '' ? [currentVal] : []);
+        const nextArr = arr
+          .filter(x => !deletedOptions.includes(x)) // 移除被刪選項
+          .map(x => (renameMap[x] !== undefined ? renameMap[x] : x)); // 重命名映射
+
+        // 中文註釋：去重並保持原有順序
+        const deduped: string[] = [];
+        for (const x of nextArr) {
+          if (!deduped.includes(x)) deduped.push(x);
+        }
+
+        // 中文註釋：判斷是否變更
+        if (JSON.stringify(deduped) !== JSON.stringify(arr)) {
+          changed = true;
+          return { ...row, [configColumnId]: deduped } as Row;
+        }
+        return row;
+      } else {
+        // 中文註釋：單選刪除採用“清空為空字串”，並套用重命名映射
+        let nextVal: string = typeof currentVal === 'string' ? currentVal : '';
+        if (renameMap[nextVal] !== undefined) {
+          nextVal = renameMap[nextVal];
+        } else if (deletedOptions.includes(nextVal)) {
+          nextVal = '';
+        }
+        if (nextVal !== (typeof currentVal === 'string' ? currentVal : '')) {
+          changed = true;
+          return { ...row, [configColumnId]: nextVal } as Row;
+        }
+        return row;
+      }
+    });
+
+    // 中文註釋：提取實際變更的行，用於批量持久化。需使用完整行數據以避免覆蓋其他欄位
+    const changedRowsFull: Row[] = [];
+    for (let i = 0; i < table.rows.length; i++) {
+      const before = table.rows[i];
+      const after = updatedRows[i];
+      if (JSON.stringify(before) !== JSON.stringify(after)) {
+        changedRowsFull.push(after);
+      }
+    }
+
+    // 中文註釋：先更新本地表格視圖（欄位結構 + 行值同步），提供即時反饋
+    onUpdateTable({ ...table, columns: updatedColumns, rows: updatedRows });
+
+    // 中文註釋：後端批量持久化（若不可用則逐行更新或僅本地更新）
+    try {
+      if (onBatchUpdateRows && changedRowsFull.length > 0) {
+        await onBatchUpdateRows(table.id, changedRowsFull);
+      } else if (onUpdateRow && changedRowsFull.length > 0) {
+        for (const r of changedRowsFull) {
+          await onUpdateRow(table.id, r.id, r);
+        }
+      }
+    } catch (err) {
+      console.error('批量持久化失敗:', err);
+      toast.error('批量持久化失敗，已回退變更');
+      // 中文註釋：持久化失敗則回退本地數據
+      onUpdateTable({ ...table, columns: table.columns, rows: table.rows });
+      return;
+    }
+
+    // 中文註釋：收尾與提示
     setConfigColumnId(null);
     setConfigForm(null);
     toast.success('欄位設定已更新');
@@ -2089,6 +2228,7 @@ export function DataTable({
                             placeholder={`選項 ${index + 1}`}
                           />
                           <Button type="button" variant="outline" size="sm" onClick={() => {
+                            // 中文註釋：刪除選項（僅在設定中暫存），真正影響行值的變更將在保存時進行確認與同步
                             const newOptions = configForm.options.filter((_, i) => i !== index);
                             setConfigForm({ ...configForm, options: newOptions.length ? newOptions : [''] });
                           }}>
