@@ -3,6 +3,45 @@ import { Table } from '@/types'
 import { apiService } from '@/lib/api'
 import { toast } from 'sonner'
 
+// 移除瀏覽器本地存儲的行順序工具，改為後端持久化
+const ROW_ORDER_KEY_PREFIX = 'tableRowOrder:'
+const getLocalRowOrder = (tableId: string): string[] => {
+  try {
+    const raw = localStorage.getItem(`${ROW_ORDER_KEY_PREFIX}${tableId}`)
+    if (!raw) return []
+    const ids = JSON.parse(raw)
+    return Array.isArray(ids) ? ids : []
+  } catch {
+    return []
+  }
+}
+const setLocalRowOrder = (tableId: string, orderIds: string[]) => {
+  try {
+    localStorage.setItem(`${ROW_ORDER_KEY_PREFIX}${tableId}`, JSON.stringify(orderIds))
+  } catch (e) {
+    console.warn('保存行順序到本地失敗', e)
+  }
+}
+const applyRowOrder = (rows: any[], orderIds: string[]) => {
+  if (!orderIds || orderIds.length === 0) return rows
+  const idToRow = new Map(rows.map(r => [r.id, r]))
+  const ordered: any[] = []
+  for (const id of orderIds) {
+    const row = idToRow.get(id)
+    if (row) {
+      ordered.push(row)
+      idToRow.delete(id)
+    }
+  }
+  for (const r of rows) {
+    if (idToRow.has(r.id)) {
+      ordered.push(r)
+      idToRow.delete(r.id)
+    }
+  }
+  return ordered
+}
+
 export function useTables() {
   const [tables, setTablesState] = useState<Table[]>([])
   const [loading, setLoading] = useState(true)
@@ -21,7 +60,7 @@ export function useTables() {
       // 獲取所有表格
       const tablesData = await apiService.getTables()
       
-      // 為每個表格獲取行數據
+      // 為每個表格獲取行數據（已由後端按 row_orders 排序）
       const tablesWithRows = await Promise.all(
         tablesData.map(async (table: any) => {
           try {
@@ -54,8 +93,6 @@ export function useTables() {
     setTablesState(updatedTables)
     
     try {
-      // 這裡可以實現批量更新邏輯
-      // 暫時先更新本地狀態
       toast.success('數據已更新')
     } catch (err) {
       console.error('Error syncing tables:', err)
@@ -94,6 +131,12 @@ export function useTables() {
       // 更新表格結構
       await apiService.updateTable(updatedTable.id, tableStructure)
       
+      // 新增：持久化保存行順序（若有行數據）改用後端API
+      if (updatedTable.rows && Array.isArray(updatedTable.rows)) {
+        const orderIds = updatedTable.rows.map(r => r.id)
+        await apiService.setRowOrder(updatedTable.id, orderIds)
+      }
+      
       // 更新本地狀態
       setTablesState(prev => 
         prev.map(table => 
@@ -121,11 +164,11 @@ export function useTables() {
       // 调用API创建新行
       await apiService.createRow(tableId, rowData)
       
-      // 重新加載該表格的數據，确保UI与数据库保持同步
+      // 重新加載該表格的數據（後端已按 row_orders 排序，未設置的追加末尾）
       const rows = await apiService.getTableRows(tableId)
       setTablesState(prev => 
         prev.map(table => 
-          table.id === tableId ? { ...table, rows } : table
+          table.id === tableId ? { ...table, rows: rows || [] } : table
         )
       )
       
@@ -154,11 +197,11 @@ export function useTables() {
       // 调用API更新数据
       await apiService.updateRow(tableId, rowId, updatedRowData)
       
-      // 重新加載該表格的數據，确保UI与数据库保持同步
+      // 重新加載該表格的數據（後端已按 row_orders 排序）
       const rows = await apiService.getTableRows(tableId)
       setTablesState(prev => 
         prev.map(table => 
-          table.id === tableId ? { ...table, rows } : table
+          table.id === tableId ? { ...table, rows: rows || [] } : table
         )
       )
       
@@ -175,11 +218,11 @@ export function useTables() {
       // 调用API删除行
       await apiService.deleteRow(tableId, rowId)
       
-      // 重新加載該表格的數據，确保UI与数据库保持同步
+      // 重新加載該表格的數據（後端已按 row_orders 排序）
       const rows = await apiService.getTableRows(tableId)
       setTablesState(prev => 
         prev.map(table => 
-          table.id === tableId ? { ...table, rows } : table
+          table.id === tableId ? { ...table, rows: rows || [] } : table
         )
       )
       
@@ -196,11 +239,11 @@ export function useTables() {
     try {
       await apiService.batchUpdateRows(tableId, operations)
       
-      // 重新加載該表格的數據
+      // 重新加載該表格的數據（後端已按 row_orders 排序）
       const rows = await apiService.getTableRows(tableId)
       setTablesState(prev => 
         prev.map(table => 
-          table.id === tableId ? { ...table, rows } : table
+          table.id === tableId ? { ...table, rows: rows || [] } : table
         )
       )
       

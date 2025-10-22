@@ -146,9 +146,46 @@ class ApiService {
     });
   }
 
+  // 新增：行順序持久化 API
+  async getRowOrder(tableId) {
+    return this.request(`/tables/${tableId}/rows/order`);
+  }
+
+  async setRowOrder(tableId, orderIds: string[]) {
+    return this.request(`/tables/${tableId}/rows/order`, {
+      method: 'PUT',
+      body: JSON.stringify({ orderIds }),
+    });
+  }
+
   // 健康檢查
   async healthCheck() {
     return this.request('/health');
+  }
+  // 新增：版本歷史 API
+  async getHistoryList(tableId) {
+    return this.request(`/tables/${tableId}/history`);
+  }
+
+  async getHistoryEntry(tableId, historyId) {
+    return this.request(`/tables/${tableId}/history/${historyId}`);
+  }
+
+  async createHistorySnapshot(tableId, payload: { label?: string; source?: string; actor?: string; snapshot?: any }) {
+    return this.request(`/tables/${tableId}/history`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+  }
+
+  async clearHistory(tableId) {
+    return this.request(`/tables/${tableId}/history`, { method: 'DELETE' });
+  }
+
+  async revertToHistory(tableId, historyId) {
+    return this.request(`/tables/${tableId}/history/${historyId}/revert`, {
+      method: 'POST',
+    });
   }
 }
 
