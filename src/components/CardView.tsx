@@ -115,8 +115,14 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
     toast.success('行更新成功');
 
     // 註冊回滾：僅還原本次修改的欄位
+    const titleColId = table.columns[0]?.id;
+    const titleForLabel = String((prevRow as any)[titleColId] ?? '未命名');
+    const changedNames = changedKeys.map(k => {
+      const col = table.columns.find(c => c.id === k);
+      return col ? col.name : k;
+    });
     onSetLastOperation?.({
-      label: '卡片視圖：行更新',
+      label: `行更新 | 卡片「${titleForLabel}」${changedNames.length ? `變更欄位：${changedNames.join('、')}` : '更新'}`,
       undo: async () => {
         try {
           const current = latestTableRef.current;
@@ -151,8 +157,10 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
     toast.success('行刪除成功');
 
     if (deletedRow) {
+      const titleColIdDel = table.columns[0]?.id;
+      const titleForLabelDel = String((deletedRow as any)[titleColIdDel] ?? '未命名');
       onSetLastOperation?.({
-        label: '卡片視圖：刪除行',
+        label: `刪除行 | 刪除卡片「${titleForLabelDel}」`,
         undo: async () => {
           try {
             const current = latestTableRef.current;
@@ -215,8 +223,10 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
     toast.success('行新增成功');
 
     // 註冊回滾：移除剛新增的行
+    const titleColIdNew = table.columns[0]?.id;
+    const titleForLabelNew = String((newRow as any)[titleColIdNew] ?? '未命名');
     onSetLastOperation?.({
-      label: '卡片視圖：新增行',
+      label: `新增行 | 新增卡片「${titleForLabelNew}」`,
       undo: async () => {
         try {
           const current = latestTableRef.current;
@@ -271,7 +281,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
     toast.success(`已刪除 ${rowsToDelete.length} 筆資料`);
 
     onSetLastOperation?.({
-      label: '卡片視圖：批量刪除',
+      label: `批量刪除 | 刪除 ${rowsToDelete.length} 張卡片`,
       undo: async () => {
         try {
           const current = latestTableRef.current;
@@ -329,7 +339,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
 
     // 註冊回滾：恢復批量編輯前值（僅還原選中行的該欄位）
     onSetLastOperation?.({
-      label: '卡片視圖：批量編輯',
+      label: `批量編輯 | 欄位「${column.name}」更新 ${selectedIds.length} 張卡片`,
       undo: async () => {
         try {
           const current = latestTableRef.current;
@@ -415,6 +425,22 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
 
     setSelectedRows(new Set());
     toast.success(`已複製 ${selectedRowsData.length} 筆資料`);
+
+    onSetLastOperation?.({
+      label: `批量複製 | 複製 ${duplicatedRows.length} 張卡片`,
+      undo: async () => {
+        try {
+          const current = latestTableRef.current;
+          const rows = current.rows.filter(r => !duplicatedRows.some(d => d.id === r.id));
+          onUpdateTable({ ...current, rows });
+          toast.success('已回滾卡片視圖批量複製');
+        } catch (e) {
+          console.error('回滾卡片視圖批量複製失敗:', e);
+          toast.error('回滾卡片視圖批量複製失敗');
+        }
+      },
+      source: '卡片視圖',
+    });
   };
 
   const filteredRows = table.rows.filter(row => {

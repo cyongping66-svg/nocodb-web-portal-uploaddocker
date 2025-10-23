@@ -49,6 +49,41 @@ router.get('/:tableId/rows', (req, res) => {
   });
 });
 
+// 新增：獲取指定表的行順序（row_id 陣列）
+router.get('/:tableId/rows/order', (req, res) => {
+  const { tableId } = req.params;
+  db.getRowOrder(tableId, (err, orderIds) => {
+    if (err) {
+      console.error('Error getting row order:', err);
+      return res.status(500).json({ error: 'Failed to get row order' });
+    }
+    res.json({ orderIds });
+  });
+});
+
+// 新增：更新指定表的行順序
+router.put('/:tableId/rows/order', (req, res) => {
+  const { tableId } = req.params;
+  const { orderIds } = req.body || {};
+
+  if (!Array.isArray(orderIds)) {
+    return res.status(400).json({ error: 'orderIds must be an array' });
+  }
+
+  try {
+    db.setRowOrder(tableId, orderIds, (err) => {
+      if (err) {
+        console.error('Error setting row order:', err);
+        return res.status(500).json({ error: 'Failed to set row order' });
+      }
+      res.json({ message: 'Row order saved' });
+    });
+  } catch (e) {
+    console.error('Error setting row order:', e);
+    res.status(500).json({ error: 'Failed to set row order' });
+  }
+});
+
 // 創建新行
 router.post('/:tableId/rows', (req, res) => {
   const { tableId } = req.params;
@@ -169,14 +204,8 @@ router.delete('/:tableId/rows/:rowId/files/:columnId', (req, res) => {
     const data = JSON.parse(row.data || '{}');
     const fileInfo = data[columnId];
 
-    // 嘗試刪除磁碟檔案（若存在路徑）
-    if (fileInfo && fileInfo.path) {
-      fs.unlink(fileInfo.path, (unlinkErr) => {
-        if (unlinkErr) {
-          console.warn('Warning: failed to remove file:', fileInfo.path, unlinkErr);
-        }
-      });
-    }
+    // 保留磁碟檔案以支援撤回（僅清空欄位關聯）
+    // 若需硬刪除，可後續提供參數控制或獨立清理流程
 
     // 清空欄位中的附件資訊
     data[columnId] = null;

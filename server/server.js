@@ -23,6 +23,7 @@ app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
 // API 路由
 app.use('/api/tables', require('./routes/tables'));
 app.use('/api/tables', require('./routes/rows'));
+app.use('/api/tables', require('./routes/history'));
 
 // 健康檢查
 app.get('/api/health', (req, res) => {

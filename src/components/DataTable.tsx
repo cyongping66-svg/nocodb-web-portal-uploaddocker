@@ -24,6 +24,7 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
   horizontalListSortingStrategy,
+  verticalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
 import {
@@ -198,6 +199,75 @@ function SortableHeader({ column, sortConfig, onSort, onDelete, columnWidth, onR
   );
 }
 
+// 新增：可拖拽的行組件，僅通過行首手柄觸發拖拽
+interface SortableRowProps {
+  row: Row;
+  selected: boolean;
+  onToggleSelect: (rowId: string) => void;
+  columns: Column[];
+  columnWidths: Record<string, number>;
+  renderCell: (row: Row, column: Column) => any;
+  onDeleteRow: (rowId: string) => void;
+  dragDisabled?: boolean;
+}
+
+function SortableRow({ row, selected, onToggleSelect, columns, columnWidths, renderCell, onDeleteRow, dragDisabled }: SortableRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: row.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  } as any;
+
+  return (
+    <tr ref={setNodeRef} style={style} className="border-t border-border hover:bg-muted/25 transition-colors group">
+      <td className="p-2">
+        <div className="flex items-center justify-center gap-1">
+          <button
+            onClick={() => onToggleSelect(row.id)}
+            className="p-1 hover:bg-muted rounded"
+          >
+            {selected ? (
+              <CheckSquare className="w-4 h-4 text-primary" />
+            ) : (
+              <Square className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+            )}
+          </button>
+          <button
+            className="p-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab active:cursor-grabbing"
+            title={dragDisabled ? '清除篩選或排序後可拖拽' : '拖拽調整行順序'}
+            {...(dragDisabled ? {} : { ...attributes, ...listeners })}
+          >
+            <GripVertical className="w-3 h-3 text-muted-foreground" />
+          </button>
+        </div>
+      </td>
+      {columns.map((column) => (
+        <td
+          key={column.id}
+          className="border-r border-border last:border-r-0"
+          style={{
+            width: columnWidths[column.id] ? `${columnWidths[column.id]}px` : 'auto',
+            minWidth: '120px'
+          }}
+        >
+          {renderCell(row, column)}
+        </td>
+      ))}
+      <td className="p-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 h-auto"
+          onClick={() => onDeleteRow(row.id)}
+        >
+          <Trash2 className="w-3 h-3" />
+        </Button>
+      </td>
+    </tr>
+  );
+}
+
 export function DataTable({ 
   table, 
   onUpdateTable: originalOnUpdateTable, 
@@ -208,9 +278,9 @@ export function DataTable({
   onSetLastOperation,
 }: DataTableProps) {
   // 直接使用原始的onUpdateTable函数，不再使用localStorage
-  const onUpdateTable = (updatedTable: Table) => {
-    // 调用原始的onUpdateTable函数
-    originalOnUpdateTable(updatedTable);
+  const onUpdateTable = async (updatedTable: Table) => {
+    // 调用原始的onUpdateTable函数并等待其完成（包含後端持久化行順序等）
+    await originalOnUpdateTable(updatedTable);
   };
   
   // 追蹤最新的表格狀態，用於回滾時獲取當前 rows/columns
@@ -434,7 +504,7 @@ export function DataTable({
       }
       // 新增：設置可回滾的最後一次操作（欄位設定變更）
       onSetLastOperation?.({
-        label: '欄位設定變更',
+        label: `欄位設定變更 | 欄位：${table.columns.find(c => c.id === configColumnId)?.name || configColumnId}，變更筆數：${changedRowsFull.length}`,
         undo: async () => {
           try {
             // 回滾欄位結構
@@ -479,6 +549,121 @@ export function DataTable({
   const [isBatchEditOpen, setIsBatchEditOpen] = useState(false);
   const [batchEditColumn, setBatchEditColumn] = useState('');
   const [batchEditValue, setBatchEditValue] = useState('');
+
+  // 幫手：取得當前視圖中的行序號（1 起算）；若被篩掉則回退以原始 rows 順序
+  const getDisplayedRowIndex = (rowId: string) => {
+    try {
+      const filteredRows = table.rows.filter(row => {
+        // 搜尋篩選
+        if (searchTerm) {
+          const searchMatch = Object.values(row).some(value => {
+            if (value && typeof value === 'object' && (value as any).name) {
+              return String((value as any).name).toLowerCase().includes(searchTerm.toLowerCase());
+            }
+            return String(value || '').toLowerCase().includes(searchTerm.toLowerCase());
+          });
+          if (!searchMatch) return false;
+        }
+
+        // 欄位篩選
+        return Object.entries(filters).every(([filterKey, filterValue]) => {
+          if (!filterValue || filterValue === '__all__') return true;
+
+          // 範圍篩選（數字 / 日期）
+          if (
+            filterKey.endsWith('_min') || filterKey.endsWith('_max') ||
+            filterKey.endsWith('_start') || filterKey.endsWith('_end')
+          ) {
+            const columnId = filterKey.replace(/_min|_max|_start|_end$/, '');
+            const column = table.columns.find(col => col.id === columnId);
+            const cellValue = (row as any)[columnId];
+
+            if (!column || cellValue === null || cellValue === undefined) return true;
+
+            if (column.type === 'number') {
+              const numValue = parseFloat(cellValue);
+              if (isNaN(numValue)) return true;
+
+              if (filterKey.endsWith('_min')) {
+                const minValue = parseFloat(filterValue);
+                return isNaN(minValue) || numValue >= minValue;
+              } else if (filterKey.endsWith('_max')) {
+                const maxValue = parseFloat(filterValue);
+                return isNaN(maxValue) || numValue <= maxValue;
+              }
+            } else if (column.type === 'date') {
+              const dateValue = new Date(cellValue);
+              const filterDate = new Date(filterValue);
+
+              if (isNaN(dateValue.getTime()) || isNaN(filterDate.getTime())) return true;
+
+              if (filterKey.endsWith('_start')) {
+                return dateValue >= filterDate;
+              } else if (filterKey.endsWith('_end')) {
+                return dateValue <= filterDate;
+              }
+            }
+
+            return true;
+          }
+
+          // 一般篩選
+          const cellValue = (row as any)[filterKey];
+          const column = table.columns.find(col => col.id === filterKey);
+
+          if (!column) return true;
+
+          if (column.type === 'boolean') {
+            return String(cellValue) === filterValue;
+          } else if (column.type === 'select') {
+            return cellValue === filterValue;
+          } else {
+            if (cellValue && typeof cellValue === 'object' && (cellValue as any).name) {
+              return String((cellValue as any).name).toLowerCase().includes(filterValue.toLowerCase());
+            }
+            return String(cellValue || '').toLowerCase().includes(filterValue.toLowerCase());
+          }
+        });
+      });
+
+      const sortedRows = [...filteredRows];
+      if (sortConfig) {
+        sortedRows.sort((a, b) => {
+          const aVal = (a as any)[sortConfig.key];
+          const bVal = (b as any)[sortConfig.key];
+          const column = table.columns.find(col => col.id === sortConfig.key);
+
+          if (column?.type === 'number') {
+            const numA = Number(aVal) || 0;
+            const numB = Number(bVal) || 0;
+            return sortConfig.direction === 'asc' ? numA - numB : numB - numA;
+          } else if (column?.type === 'date') {
+            const dateA = new Date(aVal || 0).getTime();
+            const dateB = new Date(bVal || 0).getTime();
+            return sortConfig.direction === 'asc' ? dateA - dateB : dateB - dateA;
+          } else if (column?.type === 'boolean') {
+            const boolA = aVal === true ? 1 : 0;
+            const boolB = bVal === true ? 1 : 0;
+            return sortConfig.direction === 'asc' ? boolA - boolB : boolB - boolA;
+          } else {
+            const strA = String(aVal || '').toLowerCase();
+            const strB = String(bVal || '').toLowerCase();
+            if (strA < strB) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (strA > strB) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+          }
+        });
+      }
+
+      const idx = sortedRows.findIndex(r => r.id === rowId);
+      if (idx >= 0) return idx + 1;
+
+      const baseIdx = table.rows.findIndex(r => r.id === rowId);
+      return baseIdx >= 0 ? baseIdx + 1 : -1;
+    } catch {
+      return -1;
+    }
+  };
 
   // 文件預覽與右鍵選單狀態
   const [fileContextMenu, setFileContextMenu] = useState<{ visible: boolean; x: number; y: number; rowId: string; columnId: string } | null>(null);
@@ -554,12 +739,40 @@ export function DataTable({
     input.onchange = async (e: any) => {
       const f: File | undefined = e.target?.files?.[0];
       if (!f) return;
+      // 取得上傳前的舊值，以支援撤回
+      const prevRow = table.rows.find(r => r.id === rowId);
+      const prevValue = prevRow ? (prevRow as any)[columnId] : null;
       try {
         const res = await apiService.uploadFile(table.id, rowId, columnId, f);
         const fileData = res?.file ? { ...res.file, url: res.file.url } : null;
         const updatedRows = table.rows.map(r => r.id === rowId ? { ...r, [columnId]: fileData } : r);
         onUpdateTable({ ...table, rows: updatedRows });
         toast.success('附件已更新');
+        // 登記可撤回操作：刪除新檔案並恢復舊值
+        onSetLastOperation?.({
+          label: `附件重新上傳 | 欄位：${table.columns.find(c => c.id === columnId)?.name || columnId}，行：${getDisplayedRowIndex(rowId)}`,
+          undo: async () => {
+            try {
+              const current = latestTableRef.current;
+              // 刪除新上傳附件（清空欄位）
+              await apiService.deleteFile(current.id, rowId, columnId);
+              // 若存在舊值，恢復舊值到欄位
+              if (prevValue) {
+                if (onUpdateRow) {
+                  await onUpdateRow(current.id, rowId, { [columnId]: prevValue });
+                } else {
+                  const revertRows = current.rows.map(r => r.id === rowId ? { ...r, [columnId]: prevValue } : r);
+                  onUpdateTable({ ...current, rows: revertRows });
+                }
+              }
+              toast.success('已撤回附件重新上傳');
+            } catch (e) {
+              console.error('撤回附件重新上傳失敗:', e);
+              toast.error('撤回附件重新上傳失敗');
+            }
+          },
+          source: '表格視圖'
+        });
       } catch (err) {
         console.error(err);
         toast.error('重新上傳失敗');
@@ -569,11 +782,40 @@ export function DataTable({
   };
 
   const deleteFileFromCell = async (rowId: string, columnId: string) => {
+    // 記錄刪除前的舊值，以支援撤回
+    const prevRow = table.rows.find(r => r.id === rowId);
+    const prevValue = prevRow ? (prevRow as any)[columnId] : null;
     try {
       await apiService.deleteFile(table.id, rowId, columnId);
       const updatedRows = table.rows.map(r => r.id === rowId ? { ...r, [columnId]: null } : r);
       onUpdateTable({ ...table, rows: updatedRows });
       toast.success('附件已刪除');
+      // 登記可撤回操作：恢復欄位至刪除前附件
+      onSetLastOperation?.({
+        label: `刪除附件 | 欄位：${table.columns.find(c => c.id === columnId)?.name || columnId}，行：${getDisplayedRowIndex(rowId)}`,
+        undo: async () => {
+          try {
+            const current = latestTableRef.current;
+            if (prevValue) {
+              if (onUpdateRow) {
+                await onUpdateRow(current.id, rowId, { [columnId]: prevValue });
+              } else {
+                const revertRows = current.rows.map(r => r.id === rowId ? { ...r, [columnId]: prevValue } : r);
+                onUpdateTable({ ...current, rows: revertRows });
+              }
+            } else {
+              // 若原本為空，僅維持空值
+              const revertRows = current.rows.map(r => r.id === rowId ? { ...r, [columnId]: null } : r);
+              onUpdateTable({ ...current, rows: revertRows });
+            }
+            toast.success('已撤回刪除附件');
+          } catch (e) {
+            console.error('撤回刪除附件失敗:', e);
+            toast.error('撤回刪除附件失敗');
+          }
+        },
+        source: '表格視圖'
+      });
     } catch (err) {
       console.error(err);
       toast.error('刪除附件失敗');
@@ -631,26 +873,30 @@ export function DataTable({
     document.addEventListener('mouseup', handleMouseUp);
   };
 
-  const handleDragEnd = (event: DragEndEvent) => {
+  const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
 
-    if (active.id !== over?.id) {
+    if (!over || active.id === over.id) return;
+
+    const isColumnDrag = table.columns.some(col => col.id === active.id);
+    const isRowDrag = table.rows.some(row => row.id === active.id);
+
+    if (isColumnDrag) {
       const oldIndex = table.columns.findIndex(col => col.id === active.id);
       const newIndex = table.columns.findIndex(col => col.id === over?.id);
 
       const prevColumns = table.columns;
       const newColumns = arrayMove(table.columns, oldIndex, newIndex);
       
-      onUpdateTable({
+      await onUpdateTable({
         ...table,
         columns: newColumns
       });
       
       toast.success('欄位順序已更新');
 
-      // 註冊回滾：還原拖曳前的欄位順序
       onSetLastOperation?.({
-        label: '欄位順序調整',
+        label: `欄位順序調整 | ${table.columns.find(c => c.id === String(active.id))?.name || String(active.id)}：${oldIndex} → ${newIndex}`,
         undo: async () => {
           try {
             const current = latestTableRef.current;
@@ -659,6 +905,41 @@ export function DataTable({
           } catch (e) {
             console.error('回滾欄位順序調整失敗:', e);
             toast.error('回滾欄位順序調整失敗');
+          }
+        },
+        source: '表格視圖'
+      });
+    } else if (isRowDrag) {
+      const hasActiveFilters = Boolean(sortConfig) || Boolean(searchTerm) || Object.keys(filters).length > 0;
+      if (hasActiveFilters) {
+        toast.error('已開啟排序或篩選時不支持拖拽行順序');
+        return;
+      }
+
+      const oldIndex = table.rows.findIndex(r => r.id === active.id);
+      const newIndex = table.rows.findIndex(r => r.id === over.id);
+      if (oldIndex === -1 || newIndex === -1) return;
+
+      const prevRows = table.rows;
+      const newRows = arrayMove(prevRows, oldIndex, newIndex);
+
+      await onUpdateTable({
+        ...table,
+        rows: newRows
+      });
+
+      toast.success('行順序已更新');
+
+      onSetLastOperation?.({
+        label: `行順序調整 | ID：${String(active.id)}：${oldIndex} → ${newIndex}`,
+        undo: async () => {
+          try {
+            const current = latestTableRef.current;
+            onUpdateTable({ ...current, rows: prevRows });
+            toast.success('已回滾行順序調整');
+          } catch (e) {
+            console.error('回滾行順序調整失敗:', e);
+            toast.error('回滾行順序調整失敗');
           }
         },
         source: '表格視圖'
@@ -689,7 +970,7 @@ export function DataTable({
 
     // 註冊回滾：移除剛新增的欄位，並從行中刪除其值（僅影響該欄位，不影響其他欄位）
     onSetLastOperation?.({
-      label: '新增欄位',
+      label: `新增欄位 | ${column.name}（${column.type}）`,
       undo: async () => {
         try {
           const current = latestTableRef.current;
@@ -740,7 +1021,7 @@ export function DataTable({
 
     // 註冊回滾：復原刪除的欄位至原位置，並恢復各行對應值
     onSetLastOperation?.({
-      label: '刪除欄位',
+      label: `刪除欄位 | ${deletedColumn.name}（索引：${deletedIndex}）`,
       undo: async () => {
         try {
           const current = latestTableRef.current;
@@ -814,7 +1095,7 @@ export function DataTable({
 
       // 註冊回滾：移除剛新增的行
       onSetLastOperation?.({
-        label: '新增行',
+        label: `新增行 | ID：${newRow.id}`,
         undo: async () => {
           try {
             const current = latestTableRef.current;
@@ -852,7 +1133,7 @@ export function DataTable({
     // 註冊回滾：復原刪除的行（盡量回到原位置）
     if (deletedRow) {
       onSetLastOperation?.({
-        label: '刪除行',
+        label: `刪除行 | ID：${rowId}（索引：${deletedIndex}）`,
         undo: async () => {
           try {
             const current = latestTableRef.current;
@@ -988,7 +1269,7 @@ export function DataTable({
 
     // 新增：設置可回滾的最後一次操作（單元格編輯）
     onSetLastOperation?.({
-      label: '單元格編輯',
+      label: `單元格編輯 | 欄位：${column.name}，行：${getDisplayedRowIndex(prevRowId)}，${String(prevValue ?? '')} → ${String(processedValue ?? '')}`,
       undo: async () => {
         try {
           const current = latestTableRef.current;
@@ -1051,6 +1332,10 @@ export function DataTable({
 
   const handleFileUpload = async (rowId: string, columnId: string, file: File) => {
     try {
+      // 上傳前先記錄舊值，以支援撤回
+      const prevRow = table.rows.find(r => r.id === rowId);
+      const prevValue = prevRow ? (prevRow as any)[columnId] : null;
+
       // 調用後端 API 上傳文件並更新該列數據
       const result = await apiService.uploadFile(table.id, rowId, columnId, file);
       const fileData = result?.file || {
@@ -1069,6 +1354,32 @@ export function DataTable({
 
       onUpdateTable({ ...table, rows: updatedRows });
       toast.success('檔案上傳成功');
+
+      // 登記可撤回操作：刪除新檔案並恢復舊值
+      onSetLastOperation?.({
+        label: `附件上傳 | 欄位：${table.columns.find(c => c.id === columnId)?.name || columnId}，行：${getDisplayedRowIndex(rowId)}`,
+        undo: async () => {
+          try {
+            const current = latestTableRef.current;
+            // 刪除新上傳附件（清空欄位）
+            await apiService.deleteFile(current.id, rowId, columnId);
+            // 若存在舊值，恢復舊值到欄位
+            if (prevValue) {
+              if (onUpdateRow) {
+                await onUpdateRow(current.id, rowId, { [columnId]: prevValue });
+              } else {
+                const revertRows = current.rows.map(r => r.id === rowId ? { ...r, [columnId]: prevValue } : r);
+                onUpdateTable({ ...current, rows: revertRows });
+              }
+            }
+            toast.success('已撤回附件上傳');
+          } catch (e) {
+            console.error('撤回附件上傳失敗:', e);
+            toast.error('撤回附件上傳失敗');
+          }
+        },
+        source: '表格視圖'
+      });
     } catch (error) {
       console.error('File upload failed:', error);
       toast.error('檔案上傳失敗');
@@ -1140,7 +1451,7 @@ export function DataTable({
 
       // 新增：設置可回滾的最後一次操作（批量刪除）
       onSetLastOperation?.({
-        label: '批量刪除',
+        label: `批量刪除 | 筆數：${rowsToDelete.length}`,
         undo: async () => {
           try {
             if (onCreateRow) {
@@ -1218,7 +1529,7 @@ export function DataTable({
 
       // 註冊回滾：批量編輯
       onSetLastOperation?.({
-        label: `批量編輯（欄位：${batchEditColumn}，筆數：${selectedIds.length}）`,
+        label: `批量編輯 | 欄位：${table.columns.find(c => c.id === batchEditColumn)?.name || batchEditColumn}，筆數：${selectedIds.length}，值：${String(processedValue ?? '')}`,
         undo: async () => {
           try {
             const currentTable = latestTableRef.current || table;
@@ -1331,7 +1642,7 @@ export function DataTable({
 
       // 新增：設置可回滾的最後一次操作（批量複製）
       onSetLastOperation?.({
-        label: '批量複製',
+        label: `批量複製 | 筆數：${selectedRowsData.length}`,
         undo: async () => {
           try {
             if (onDeleteRow) {
@@ -2568,46 +2879,21 @@ export function DataTable({
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map((row) => (
-                  <tr key={row.id} className="border-t border-border hover:bg-muted/25 transition-colors group">
-                    <td className="p-2">
-                      <div className="flex items-center justify-center">
-                        <button
-                          onClick={() => toggleRowSelection(row.id)}
-                          className="p-1 hover:bg-muted rounded"
-                        >
-                          {selectedRows.has(row.id) ? (
-                            <CheckSquare className="w-4 h-4 text-primary" />
-                          ) : (
-                            <Square className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                          )}
-                        </button>
-                      </div>
-                    </td>
-                    {table.columns.map((column) => (
-                      <td 
-                        key={column.id} 
-                        className="border-r border-border last:border-r-0"
-                        style={{
-                          width: columnWidths[column.id] ? `${columnWidths[column.id]}px` : 'auto',
-                          minWidth: '120px'
-                        }}
-                      >
-                        {renderCell(row, column)}
-                      </td>
-                    ))}
-                    <td className="p-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 h-auto"
-                        onClick={() => deleteRow(row.id)}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
+                <SortableContext items={sortedRows.map(r => r.id)} strategy={verticalListSortingStrategy}>
+                  {sortedRows.map((row) => (
+                    <SortableRow
+                      key={row.id}
+                      row={row}
+                      selected={selectedRows.has(row.id)}
+                      onToggleSelect={toggleRowSelection}
+                      columns={table.columns}
+                      columnWidths={columnWidths}
+                      renderCell={renderCell}
+                      onDeleteRow={deleteRow}
+                      dragDisabled={Boolean(sortConfig) || Boolean(searchTerm) || Object.keys(filters).length > 0}
+                    />
+                  ))}
+                </SortableContext>
                 {sortedRows.length === 0 && table.rows.length > 0 ? (
                   <tr>
                     <td colSpan={table.columns.length + 2} className="p-8 text-center text-muted-foreground">
