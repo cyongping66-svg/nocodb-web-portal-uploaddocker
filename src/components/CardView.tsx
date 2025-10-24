@@ -70,6 +70,44 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
     originalOnUpdateTable(updatedTable);
   };
   
+  // 修復可能出現的 latin1→utf8 亂碼（mojibake）
+  const normalizeFileNameDisplay = (name: string) => {
+    if (!name) return '';
+    try {
+      const looksMojibake = /[�]|Ã|Â|Ð|¥|¤|§/.test(name);
+      if (!looksMojibake) return name;
+      try {
+        // escape + decodeURIComponent 方案
+        const repaired = decodeURIComponent(escape(name));
+        if (repaired && repaired !== name) return repaired;
+      } catch {}
+      // TextDecoder 方案：將字元視為 latin1 bytes 再用 utf8 解碼
+      const bytes = new Uint8Array(Array.from(name).map((c) => c.charCodeAt(0)));
+      const decoded = new TextDecoder('utf-8').decode(bytes);
+      return decoded || name;
+    } catch {
+      return name;
+    }
+  };
+
+  const normalizeTextDisplay = (text: any) => {
+    const s = String(text ?? '');
+    if (!s) return '';
+    try {
+      const looksMojibake = /[�]|Ã|Â|Ð|¥|¤|§/.test(s);
+      if (!looksMojibake) return s;
+      try {
+        const repaired = decodeURIComponent(escape(s));
+        if (repaired && repaired !== s) return repaired;
+      } catch {}
+      const bytes = new Uint8Array(Array.from(s).map((c) => c.charCodeAt(0)));
+      const decoded = new TextDecoder('utf-8').decode(bytes);
+      return decoded || s;
+    } catch {
+      return s;
+    }
+  };
+
   // 追蹤最新的表格狀態，用於回滾操作避免閉包過期
   const latestTableRef = useRef<Table>(table);
   useEffect(() => {
@@ -138,7 +176,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
           toast.error('回滾卡片視圖行更新失敗');
         }
       },
-      source: '卡片視圖',
+      //source: '卡片視圖',
     });
   };
 
@@ -178,7 +216,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
             toast.error('回滾卡片視圖刪除行失敗');
           }
         },
-        source: '卡片視圖'
+        //source: '卡片視圖'
       });
     }
   };
@@ -241,7 +279,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
           toast.error('回滾卡片視圖新增行失敗');
         }
       },
-      source: '卡片視圖',
+      //source: '卡片視圖',
     });
   };
 
@@ -296,7 +334,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
           toast.error('回滾卡片視圖批量刪除失敗');
         }
       },
-      source: '卡片視圖',
+      //source: '卡片視圖',
     });
   };
 
@@ -358,7 +396,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
           toast.error('回滾卡片視圖批量編輯失敗');
         }
       },
-      source: '卡片視圖'
+      //source: '卡片視圖'
     });
   };
 
@@ -442,7 +480,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
           toast.error('回滾卡片視圖批量複製失敗');
         }
       },
-      source: '卡片視圖',
+      //source: '卡片視圖',
     });
   };
 
@@ -600,90 +638,102 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
           );
         }
       case 'file':
+        if (!value) return <span className="text-sm text-muted-foreground">無檔案</span>;
         return (
-          <div className="w-full">
-            <Input
-              id={inputId}
-              type="file"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  handleFileUpload(file, onChange);
-                }
-              }}
-              className="h-8"
-            />
-            {value && (
-              <div className="text-xs text-muted-foreground mt-1">
-                已選擇: {value.name}
-              </div>
-            )}
+          <div className="flex items-center gap-2 text-sm">
+            <File className="w-4 h-4 text-blue-500" />
+            <a 
+              href={value.url} 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 underline truncate max-w-[150px]"
+              title={value.name}
+            >
+              {value.name}
+            </a>
           </div>
         );
-      case 'number':
-        return (
-          <Input
-            id={inputId}
-            type="number"
-            value={value || ''}
-            onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-            placeholder={`輸入數值`}
-            className="h-8"
-          />
-        );
-      case 'date':
-        return (
-          <Input
-            id={inputId}
-            type="datetime-local"
-            value={value || ''}
-            onChange={(e) => onChange(e.target.value)}
-            className="h-8"
-          />
-        );
       case 'url':
+        if (!value) return <span className="text-sm text-muted-foreground">無連結</span>;
         return (
-          <Input
-            id={inputId}
-            type="url"
-            value={value || ''}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="https://example.com"
-            className="h-8"
-          />
+          <div className="flex items-center gap-2 text-sm">
+            <Link className="w-4 h-4 text-blue-500" />
+            <a 
+              href={value.startsWith('http') ? value : `https://${value}`}
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 underline truncate max-w-[150px]"
+            >
+              {value}
+            </a>
+          </div>
         );
       case 'email':
+        if (!value) return <span className="text-sm text-muted-foreground">無電子郵件</span>;
         return (
-          <Input
-            id={inputId}
-            type="email"
-            value={value || ''}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="example@email.com"
-            className="h-8"
-          />
+          <div className="flex items-center gap-2 text-sm">
+            <Mail className="w-4 h-4 text-green-500" />
+            <a 
+              href={`mailto:${value}`}
+              className="text-green-600 hover:text-green-800 underline"
+            >
+              {value}
+            </a>
+          </div>
         );
       case 'phone':
+        if (!value) return <span className="text-sm text-muted-foreground">無電話號碼</span>;
         return (
-          <Input
-            id={inputId}
-            type="tel"
-            value={value || ''}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder="0912-345-678"
-            className="h-8"
-          />
+          <div className="flex items-center gap-2 text-sm">
+            <Phone className="w-4 h-4 text-purple-500" />
+            <a 
+              href={`tel:${value}`}
+              className="text-purple-600 hover:text-purple-800 underline"
+            >
+              {value}
+            </a>
+          </div>
         );
+      case 'date':
+        if (!value) return <span className="text-sm text-muted-foreground">無日期時間</span>;
+        // 处理日期类型，将T替换为空格
+        return <span className="text-sm">{String(value).replace('T', ' ')}</span>;
+      case 'select':
+        if (!value) return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
+        
+        // 处理多选模式
+        if (column.isMultiSelect && Array.isArray(value)) {
+          if (value.length === 0) return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
+          
+          return (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {value.map((selectedValue, i) => {
+                const optionIndex = column.options?.indexOf(selectedValue) || 0;
+                const colorClass = getOptionColor(selectedValue, optionIndex);
+                return (
+                  <span 
+                    key={`${selectedValue}-${i}`} 
+                    className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}
+                  >
+                    {selectedValue}
+                  </span>
+                );
+              })}
+            </div>
+          );
+        } else {
+          // 单选模式
+          const optionIndex = column.options?.indexOf(value) || 0;
+          const colorClass = getOptionColor(value, optionIndex);
+          
+          return (
+            <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
+              {value}
+            </span>
+          );
+        }
       default:
-        return (
-          <Input
-            id={inputId}
-            value={value || ''}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={`輸入內容`}
-            className="h-8"
-          />
-        );
+        return <span className="text-sm">{normalizeTextDisplay(value || '')}</span>;
     }
   };
 
@@ -703,8 +753,9 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
               target="_blank" 
               rel="noopener noreferrer"
               className="text-blue-600 hover:text-blue-800 underline truncate max-w-[150px]"
+              title={normalizeFileNameDisplay(value.name)}
             >
-              {value.name}
+              {normalizeFileNameDisplay(value.name)}
             </a>
           </div>
         );
@@ -1369,7 +1420,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
                       )}
                     </button>
                     <CardTitle className="text-base">
-                      {String(row[table.columns[0]?.id] || '未命名')}
+                      {normalizeTextDisplay(row[table.columns[0]?.id] || '未命名')}
                     </CardTitle>
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

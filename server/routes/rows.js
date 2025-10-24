@@ -8,6 +8,21 @@ const path = require('path');
 
 const db = new DatabaseWrapper(); // 创建DatabaseWrapper实例
 
+// 封裝：修正原始檔名可能的 Latin1 亂碼並做簡單清理
+function normalizeOriginalName(name) {
+  try {
+    // 將可能按 latin1 解碼的字串轉回 utf8
+    const utf8 = Buffer.from(String(name || ''), 'latin1').toString('utf8');
+    // 清理不可見控制字元與路徑分隔符
+    return utf8
+      .replace(/[\x00-\x1F\x7F]/g, '')
+      .replace(/[\\/:*?"<>|]/g, '-')
+      .trim();
+  } catch {
+    return String(name || '').trim();
+  }
+}
+
 // 配置 multer 用於文件上傳
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -18,7 +33,8 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
+    const originalName = normalizeOriginalName(file.originalname);
+    cb(null, uniqueSuffix + '-' + originalName);
   }
 });
 
@@ -89,10 +105,14 @@ router.post('/:tableId/rows', (req, res) => {
   const { tableId } = req.params;
   const rowData = req.body;
 
-  if (!rowData.id) {
-    rowData.id = uuidv4();
-  }
+  // 生成新的行 ID
+  const id = uuidv4();
 
+  // 設置表格 ID 和行 ID
+  rowData.table_id = tableId;
+  rowData.id = id;
+
+  // 保存數據
   db.createRow(tableId, rowData, (err) => {
     if (err) {
       console.error('Error creating row:', err);
@@ -145,7 +165,8 @@ router.post('/:tableId/rows/:rowId/files/:columnId', upload.single('file'), (req
   }
 
   // 構造可訪問的文件 URL（通過 /api/uploads 提供靜態訪問）
-  const fileUrl = `/api/uploads/${tableId}/${rowId}/${file.filename}`;
+  const encodedFileName = encodeURIComponent(file.filename);
+  const fileUrl = `/api/uploads/${tableId}/${rowId}/${encodedFileName}`;
 
   // 讀取當前行數據，合併文件欄位
   db.getRow(rowId, (err, row) => {
@@ -159,8 +180,9 @@ router.post('/:tableId/rows/:rowId/files/:columnId', upload.single('file'), (req
     }
 
     const data = JSON.parse(row.data || '{}');
+    const fixedOriginalName = normalizeOriginalName(file.originalname);
     data[columnId] = {
-      name: file.originalname,
+      name: fixedOriginalName,
       size: file.size,
       type: file.mimetype,
       url: fileUrl,
@@ -176,7 +198,7 @@ router.post('/:tableId/rows/:rowId/files/:columnId', upload.single('file'), (req
       res.json({
         message: 'File uploaded and row updated successfully',
         file: {
-          name: file.originalname,
+          name: fixedOriginalName,
           size: file.size,
           type: file.mimetype,
           url: fileUrl
@@ -204,106 +226,86 @@ router.delete('/:tableId/rows/:rowId/files/:columnId', (req, res) => {
     const data = JSON.parse(row.data || '{}');
     const fileInfo = data[columnId];
 
-    // 保留磁碟檔案以支援撤回（僅清空欄位關聯）
-    // 若需硬刪除，可後續提供參數控制或獨立清理流程
+    // 如果有實際文件存在，嘗試刪除
+    if (fileInfo && fileInfo.path) {
+      try { fs.unlinkSync(fileInfo.path); } catch (e) { /* 忽略文件不存在 */ }
+    }
 
-    // 清空欄位中的附件資訊
-    data[columnId] = null;
+    // 移除欄位中的附件資料
+    delete data[columnId];
 
     db.updateRow(rowId, { id: rowId, ...data }, (updateErr) => {
       if (updateErr) {
-        console.error('Error clearing file from row:', updateErr);
-        return res.status(500).json({ error: 'Failed to clear file from row' });
+        console.error('Error deleting file from row:', updateErr);
+        return res.status(500).json({ error: 'Failed to delete file from row' });
       }
 
-      res.json({ message: 'File removed successfully' });
+      res.json({ message: 'File deleted and row updated successfully' });
     });
   });
 });
 
-// 批量操作
+// 批量操作：支持創建、刪除、更新
 router.post('/:tableId/rows/batch', (req, res) => {
   const { tableId } = req.params;
-  const { operation, rows, rowIds } = req.body;
+  const { operation, operations } = req.body || {};
+
+  if (!Array.isArray(operations)) {
+    return res.status(400).json({ error: 'Invalid operations payload' });
+  }
 
   switch (operation) {
-    case 'create':
-      // 批量創建
-      const promises = rows.map(rowData => {
-        return new Promise((resolve, reject) => {
-          if (!rowData.id) {
-            rowData.id = uuidv4();
-          }
-          db.createRow(tableId, rowData, (err) => {
-            if (err) reject(err);
-            else resolve(rowData);
-          });
+    case 'create': {
+      const tx = db.db.transaction(() => {
+        operations.forEach((op) => {
+          const id = uuidv4();
+          const data = { id, table_id: tableId, ...(op.data || {}) };
+          db.createRow(tableId, data, () => {});
         });
       });
-
-      Promise.all(promises)
-        .then(results => {
-          res.status(201).json({ message: 'Rows created successfully', rows: results });
-        })
-        .catch(err => {
-          console.error('Error in batch create:', err);
-          res.status(500).json({ error: 'Failed to create rows' });
-        });
-      break;
-
-    case 'delete':
-      // 批量刪除
-      if (!rowIds || !Array.isArray(rowIds)) {
-        return res.status(400).json({ error: 'rowIds array is required for delete operation' });
+      try {
+        tx();
+        res.json({ message: `${operations.length} rows created successfully` });
+      } catch (err) {
+        console.error('Error in batch create:', err);
+        res.status(500).json({ error: 'Failed to create rows' });
       }
+      break;
+    }
 
-      const deletePromises = rowIds.map(rowId => {
-        return new Promise((resolve, reject) => {
-          db.deleteRow(rowId, (err) => {
-            if (err) reject(err);
-            else resolve(rowId);
-          });
+    case 'delete': {
+      const tx = db.db.transaction(() => {
+        operations.forEach((op) => {
+          const { id } = op;
+          db.deleteRow(id, () => {});
         });
       });
-
-      Promise.all(deletePromises)
-        .then(() => {
-          res.json({ message: `${rowIds.length} rows deleted successfully` });
-        })
-        .catch(err => {
-          console.error('Error in batch delete:', err);
-          res.status(500).json({ error: 'Failed to delete rows' });
-        });
-      break;
-
-    case 'update':
-      // 批量更新（新增）
-      if (!rows || !Array.isArray(rows)) {
-        return res.status(400).json({ error: 'rows array is required for update operation' });
+      try {
+        tx();
+        res.json({ message: `${operations.length} rows deleted successfully` });
+      } catch (err) {
+        console.error('Error in batch delete:', err);
+        res.status(500).json({ error: 'Failed to delete rows' });
       }
+      break;
+    }
 
-      const updatePromises = rows.map(rowData => {
-        return new Promise((resolve, reject) => {
-          // 确保每条更新数据都带有 id（中文注释：批量更新要求每行必须有唯一ID）
-          if (!rowData || !rowData.id) {
-            return reject(new Error('Row id is required'));
-          }
-          db.updateRow(rowData.id, rowData, (err) => {
-            if (err) reject(err);
-            else resolve(rowData.id);
-          });
+    case 'update': {
+      const tx = db.db.transaction(() => {
+        operations.forEach((op) => {
+          const { id, data } = op;
+          db.updateRow(id, { id, ...(data || {}) }, () => {});
         });
       });
-
-      Promise.all(updatePromises)
-        .then(() => {
-          res.json({ message: `${rows.length} rows updated successfully` });
-        })
-        .catch(err => {
-          console.error('Error in batch update:', err);
-          res.status(500).json({ error: 'Failed to update rows' });
-        });
+      try {
+        tx();
+        res.json({ message: `${operations.length} rows updated successfully` });
+      } catch (err) {
+        console.error('Error in batch update:', err);
+        res.status(500).json({ error: 'Failed to update rows' });
+      }
       break;
+    }
 
     default:
       res.status(400).json({ error: 'Invalid operation. Supported: create, delete, update' });
