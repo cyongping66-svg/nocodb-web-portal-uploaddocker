@@ -231,15 +231,59 @@ function App() {
   type HistoryEntry = { id: string; label?: string; source?: string; actor?: string; created_at: string };
   const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyMenuMeta, setHistoryMenuMeta] = useState<Record<string, { time: string; user: string; action: string; view: string; columns: string[]; type: 'add' | 'edit' | 'delete' | 'other'; }>>({});
+  const extractActionFromLabel = (l?: string) => {
+    if (!l) return '修改';
+    const first = String(l).split('|')[0].trim();
+    return first || '修改';
+  };
+  const classifyActionType = (action: string): 'add' | 'edit' | 'delete' | 'other' => {
+    const a = action.toLowerCase();
+    if (/[添加增新]/.test(action) || a.includes('add') || a.includes('create')) return 'add';
+    if (/[删除移除]/.test(action) || a.includes('delete') || a.includes('remove')) return 'delete';
+    if (/[修改编輯编辑]/.test(action) || a.includes('edit') || a.includes('update')) return 'edit';
+    return 'other';
+  };
   const loadHistory = async (tableId: string) => {
     setHistoryLoading(true);
     try {
       const list = await apiService.getHistoryList(tableId);
-      setHistoryList(Array.isArray(list) ? list : []);
-      if (Array.isArray(list) && list.length === 0) {
+      const normalized = Array.isArray(list) ? list : [];
+      setHistoryList(normalized);
+      if (normalized.length === 0) {
         await apiService.createHistorySnapshot(tableId, { label: '初始載入', source: '系統' });
         const refreshed = await apiService.getHistoryList(tableId);
-        setHistoryList(Array.isArray(refreshed) ? refreshed : []);
+        const normalized2 = Array.isArray(refreshed) ? refreshed : [];
+        setHistoryList(normalized2);
+      }
+      // 構建下拉菜單的二行摘要（前 12 條），以「當前表」為對比基準
+      setHistoryMenuMeta({});
+      if (activeTable) {
+        const currentState = { columns: activeTable.columns || [], rows: activeTable.rows || [] };
+        const sourceList = normalized.length ? normalized : [];
+        const limit = Math.min(sourceList.length, 12);
+        const top = sourceList.slice(0, limit);
+        const metaPairs: Array<[string, { time: string; user: string; action: string; view: string; columns: string[]; type: 'add' | 'edit' | 'delete' | 'other'; }]> = [];
+        for (const entry of top) {
+          try {
+            const detail = await apiService.getHistoryEntry(tableId, entry.id);
+            const prevSnap = detail?.snapshot;
+            const diffs = computeSnapshotDiff(prevSnap, currentState);
+            const actor = entry.actor || '未知用戶';
+            const source = entry.source || '未知來源';
+            const action = extractActionFromLabel(entry.label || entry.id);
+            const type = classifyActionType(action);
+            const colIds = Array.from(new Set(diffs.flatMap(d => d.changes.map(ch => ch.columnId))));
+            const columns = colIds.map(cid => activeTable.columns.find(c => c.id === cid)?.name || cid);
+            const time = formatLocalTime(entry.created_at);
+            metaPairs.push([entry.id, { time, user: actor, action, view: source, columns, type }]);
+          } catch (e) {
+            console.warn('生成歷史菜單元數據失敗:', e);
+          }
+        }
+        if (metaPairs.length) {
+          setHistoryMenuMeta(prev => ({ ...prev, ...Object.fromEntries(metaPairs) }));
+        }
       }
     } catch (e) {
       console.error('載入歷史失敗:', e);
@@ -1079,9 +1123,20 @@ function App() {
                             <DropdownMenuItem key={entry.id} onClick={() => {
                               openHistoryDetail(entry);
                             }}>
-                              <div className="flex flex-col">
-                                <span className="text-sm">{entry.label || entry.id}</span>
-                                <span className="text-xs text-muted-foreground">{formatLocalTime(entry.created_at)} · {entry.source || '未知來源'} · {entry.actor ? `由 ${entry.actor}` : '未知用戶'}</span>
+                              <div className="flex items-start gap-2">
+                                <span className={`mt-1 w-2 h-2 rounded-full ${
+                                  (historyMenuMeta[entry.id]?.type === 'add') ? 'bg-green-500' :
+                                  (historyMenuMeta[entry.id]?.type === 'delete') ? 'bg-red-500' :
+                                  (historyMenuMeta[entry.id]?.type === 'edit') ? 'bg-blue-500' : 'bg-gray-400'
+                                }`}></span>
+                                <div className="flex flex-col">
+                                  <span className="text-xs">
+                                    {(historyMenuMeta[entry.id]?.time || formatLocalTime(entry.created_at)) + ' -- ' + (historyMenuMeta[entry.id]?.user || entry.actor || '未知用戶')}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {`【${historyMenuMeta[entry.id]?.action || extractActionFromLabel(entry.label || entry.id)}】`}
+                                  </span>
+                                </div>
                               </div>
                             </DropdownMenuItem>
                           ))
