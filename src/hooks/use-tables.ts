@@ -101,6 +101,10 @@ export function useTables() {
   }
 
   const createTable = async (table: Omit<Table, 'rows'>) => {
+    if (!isAuthenticated()) {
+      toast.error('未登入，禁止新增表格');
+      throw new Error('NOT_AUTHENTICATED');
+    }
     try {
       const result = await apiService.createTable(table)
       const newTable: Table = { ...table, rows: [] }
@@ -113,6 +117,10 @@ export function useTables() {
   }
 
   const deleteTable = async (tableId: string) => {
+    if (!isAuthenticated()) {
+      toast.error('未登入，禁止刪除表格');
+      throw new Error('NOT_AUTHENTICATED');
+    }
     try {
       await apiService.deleteTable(tableId)
       setTablesState(prev => prev.filter(t => t.id !== tableId))
@@ -124,6 +132,10 @@ export function useTables() {
   }
 
   const updateTable = async (updatedTable: Table) => {
+    if (!isAuthenticated()) {
+      toast.error('未登入，禁止更新表格');
+      throw new Error('NOT_AUTHENTICATED');
+    }
     try {
       // 分離表格結構和行數據
       const { rows, ...tableStructure } = updatedTable
@@ -155,6 +167,10 @@ export function useTables() {
 
   // 行數據操作方法
   const createRow = async (tableId: string, rowData: any) => {
+    if (!isAuthenticated()) {
+      toast.error('未登入，禁止新增行');
+      throw new Error('NOT_AUTHENTICATED');
+    }
     try {
       // 确保有唯一的ID
       if (!rowData.id) {
@@ -181,6 +197,10 @@ export function useTables() {
   }
 
   const updateRow = async (tableId: string, rowId: string, rowData: any) => {
+    if (!isAuthenticated()) {
+      toast.error('未登入，禁止更新行');
+      throw new Error('NOT_AUTHENTICATED');
+    }
     try {
       // 首先获取当前行数据
       const table = tables.find(t => t.id === tableId);
@@ -214,6 +234,10 @@ export function useTables() {
   }
 
   const deleteRow = async (tableId: string, rowId: string) => {
+    if (!isAuthenticated()) {
+      toast.error('未登入，禁止刪除行');
+      throw new Error('NOT_AUTHENTICATED');
+    }
     try {
       // 调用API删除行
       await apiService.deleteRow(tableId, rowId)
@@ -236,6 +260,10 @@ export function useTables() {
   }
 
   const batchUpdateRows = async (tableId: string, operations: any[]) => {
+    if (!isAuthenticated()) {
+      toast.error('未登入，禁止批量操作');
+      throw new Error('NOT_AUTHENTICATED');
+    }
     try {
       await apiService.batchUpdateRows(tableId, operations)
       
@@ -269,3 +297,5 @@ export function useTables() {
     refresh
   }
 }
+
+const isAuthenticated = () => !!(localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name'));

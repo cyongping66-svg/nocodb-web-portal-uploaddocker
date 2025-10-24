@@ -72,6 +72,17 @@ class DatabaseWrapper {
         )
       `);
 
+      // 新增：用戶角色與權限設定表
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS user_settings (
+          id TEXT PRIMARY KEY,
+          username TEXT UNIQUE NOT NULL,
+          role TEXT,
+          permissions TEXT,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+
       // 只有在表格創建成功後才插入示例數據
       this.insertSampleData();
     } catch (err) {
@@ -464,6 +475,48 @@ class DatabaseWrapper {
       callback(null);
     } catch (err) {
       callback(err);
+    }
+  }
+
+  // 用戶設定：獲取指定使用者的角色與權限
+  getUserSettings(username, callback) {
+    try {
+      const row = this.db
+        .prepare('SELECT username, role, permissions, updated_at FROM user_settings WHERE username = ?')
+        .get(username);
+      callback(null, row || null);
+    } catch (err) {
+      callback(err, null);
+    }
+  }
+
+  // 用戶設定：保存/更新指定使用者的角色與權限（upsert）
+  upsertUserSettings(username, role, permissions, callback) {
+    try {
+      const tx = this.db.transaction(() => {
+        const exists = this.db
+          .prepare('SELECT id FROM user_settings WHERE username = ?')
+          .get(username);
+        const permsStr = JSON.stringify(Array.isArray(permissions) ? permissions : []);
+        if (exists && exists.id) {
+          const upd = this.db.prepare(
+            'UPDATE user_settings SET role = ?, permissions = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?'
+          );
+          upd.run(role || null, permsStr, username);
+        } else {
+          const ins = this.db.prepare(
+            'INSERT INTO user_settings (id, username, role, permissions) VALUES (?, ?, ?, ?)'
+          );
+          ins.run(uuidv4(), username, role || null, permsStr);
+        }
+      });
+      tx();
+      const saved = this.db
+        .prepare('SELECT username, role, permissions, updated_at FROM user_settings WHERE username = ?')
+        .get(username);
+      callback(null, saved);
+    } catch (err) {
+      callback(err, null);
     }
   }
 }

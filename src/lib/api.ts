@@ -13,44 +13,43 @@ class ApiService {
     this.baseURL = API_BASE_URL;
   }
 
-  async request(endpoint: string, options: RequestOptions = {}) {
-    const url = `${this.baseURL}${endpoint}`;
-    const config: RequestInit = {
+  async request(path, options = {}) {
+    const baseUrl = getApiOrigin();
+    const url = `${baseUrl}/api${path}`;
+
+    const method = (options.method || 'GET').toUpperCase();
+    const isWriteMethod = method !== 'GET' && method !== 'HEAD';
+    const currentUserName = localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name');
+    if (isWriteMethod && !currentUserName) {
+      throw new Error('NOT_AUTHENTICATED');
+    }
+
+    const response = await fetch(url, {
       headers: {
         'Content-Type': 'application/json',
-        ...options.headers,
       },
-      credentials: 'include',
       ...options,
-    };
+    });
+
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status}`);
+    }
 
     try {
-      const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
       return await response.json();
-    } catch (error) {
-      console.error(`API request failed: ${endpoint}`, error);
-      throw error;
+    } catch (e) {
+      return null;
     }
   }
 
-  // 表格相關 API
   async getTables() {
-    return this.request('/tables');
+    return this.request(`/tables`);
   }
 
-  async getTable(tableId) {
-    return this.request(`/tables/${tableId}`);
-  }
-
-  async createTable(tableData) {
-    return this.request('/tables', {
+  async createTable(table) {
+    return this.request(`/tables`, {
       method: 'POST',
-      body: JSON.stringify(tableData),
+      body: JSON.stringify(table),
     });
   }
 
@@ -92,42 +91,14 @@ class ApiService {
     });
   }
 
-  // 檔案上傳 API（新增）
-  async uploadFile(tableId, rowId, columnId, file: File) {
-    const url = `${this.baseURL}/tables/${tableId}/rows/${rowId}/files/${columnId}`;
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        body: formData,
-        credentials: 'include',
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
-
-      // 將相對路徑轉換為絕對 URL，以便在不同端口下正確訪問
-      if (data?.file?.url && data.file.url.startsWith('/')) {
-        const apiOrigin = getApiOrigin();
-        data.file.url = `${apiOrigin}${data.file.url}`;
-      }
-
-      return data;
-    } catch (error) {
-      console.error(`File upload failed: ${url}`, error);
-      throw error;
-    }
-  }
-
-  async deleteFile(tableId, rowId, columnId) {
-    return this.request(`/tables/${tableId}/rows/${rowId}/files/${columnId}`, {
-      method: 'DELETE',
+  async setRowOrder(tableId, orderIds) {
+    return this.request(`/tables/${tableId}/rows/order`, {
+      method: 'PUT',
+      body: JSON.stringify({ orderIds }),
     });
   }
 
+  // 批量操作：刪除多行
   async batchDeleteRows(tableId, rowIds) {
     return this.request(`/tables/${tableId}/rows/batch`, {
       method: 'POST',
@@ -138,51 +109,85 @@ class ApiService {
     });
   }
 
-  async batchUpdateRows(tableId, rows) {
-    // 中文注释：批量更新使用同一批量接口，operation 指定為 'update'
+  // 批量操作：更新多行
+  async batchUpdateRows(tableId, operations) {
     return this.request(`/tables/${tableId}/rows/batch`, {
       method: 'POST',
-      body: JSON.stringify({ operation: 'update', rows }),
+      body: JSON.stringify({
+        operation: 'update',
+        operations,
+      }),
     });
   }
 
-  // 新增：行順序持久化 API
-  async getRowOrder(tableId) {
-    return this.request(`/tables/${tableId}/rows/order`);
+  // 文件上傳相關
+  async uploadFile(tableId, rowId, columnId, file) {
+    const baseUrl = getApiOrigin();
+    const url = `${baseUrl}/api/tables/${tableId}/rows/${rowId}/files/${columnId}`;
+
+    const currentUserName = localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name');
+    if (!currentUserName) {
+      throw new Error('NOT_AUTHENTICATED');
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`File upload failed: ${response.status}`);
+    }
+
+    return await response.json();
   }
 
-  async setRowOrder(tableId, orderIds: string[]) {
-    return this.request(`/tables/${tableId}/rows/order`, {
+  async deleteFile(tableId, rowId, columnId) {
+    return this.request(`/tables/${tableId}/rows/${rowId}/files/${columnId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getUserSettings(username) {
+    const safeName = encodeURIComponent(username);
+    return this.request(`/users/${safeName}/settings`);
+  }
+
+  async updateUserSettings(username, settings) {
+    const safeName = encodeURIComponent(username);
+    return this.request(`/users/${safeName}/settings`, {
       method: 'PUT',
-      body: JSON.stringify({ orderIds }),
+      body: JSON.stringify(settings),
     });
   }
 
-  // 健康檢查
-  async healthCheck() {
-    return this.request('/health');
-  }
-  // 新增：版本歷史 API
-  async getHistoryList(tableId) {
+  // 歷史版本 API
+  async getHistoryList(tableId: string) {
     return this.request(`/tables/${tableId}/history`);
   }
 
-  async getHistoryEntry(tableId, historyId) {
+  async getHistoryEntry(tableId: string, historyId: string) {
     return this.request(`/tables/${tableId}/history/${historyId}`);
   }
 
-  async createHistorySnapshot(tableId, payload: { label?: string; source?: string; actor?: string; snapshot?: any }) {
+  async createHistorySnapshot(tableId: string, { label, source, snapshot }: { label?: string; source?: string; snapshot?: any }) {
+    const actor = localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name') || null;
     return this.request(`/tables/${tableId}/history`, {
       method: 'POST',
-      body: JSON.stringify(payload || {}),
+      body: JSON.stringify({ label, source, actor, snapshot }),
     });
   }
 
-  async clearHistory(tableId) {
-    return this.request(`/tables/${tableId}/history`, { method: 'DELETE' });
+  async clearHistory(tableId: string) {
+    return this.request(`/tables/${tableId}/history`, {
+      method: 'DELETE',
+    });
   }
 
-  async revertToHistory(tableId, historyId) {
+  async revertToHistory(tableId: string, historyId: string) {
     return this.request(`/tables/${tableId}/history/${historyId}/revert`, {
       method: 'POST',
     });

@@ -63,6 +63,7 @@ interface CardViewProps {
 }
 
 export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLastOperation }: CardViewProps) {
+  const isAuthenticated = () => !!(localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name'));
   // 直接使用原始的onUpdateTable函数，不再使用localStorage
   const onUpdateTable = (updatedTable: Table) => {
     // 调用原始的onUpdateTable函数
@@ -93,6 +94,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
   };
 
   const saveEdit = () => {
+  if (!isAuthenticated()) { toast.error('未登入，禁止編輯'); return; }
     if (!editingRow) return;
 
     // 快照：更新前的整行資料
@@ -182,6 +184,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
   };
 
   const addNewRow = () => {
+  if (!isAuthenticated()) { toast.error('未登入，禁止新增'); return; }
     const newRow: Row = {
       id: Date.now().toString(),
       ...table.columns.reduce((acc, col) => {
@@ -516,6 +519,12 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
       }
     });
   });
+
+  const handleFileUpload = (file: File, onChange: (value: any) => void) => {
+    if (!isAuthenticated()) { toast.error('未登入，禁止上傳'); return; }
+    const url = URL.createObjectURL(file);
+    onChange({ name: file.name, url, size: file.size, type: file.type });
+  };
 
   const renderFieldInput = (column: any, value: any, onChange: (value: any) => void, isEditing = false) => {
     const inputId = `${column.id}-${isEditing ? 'edit' : 'new'}`;

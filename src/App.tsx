@@ -8,14 +8,16 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Table as TableIcon, Grid3X3, Download, Menu, X, RotateCcw, History, Trash2 } from 'lucide-react';
+import { Plus, Table as TableIcon, Grid3X3, Download, Menu, X, RotateCcw, History, Trash2, User } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
+import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
 import { toast, Toaster } from 'sonner';
 import { Table, ViewMode } from '@/types';
 import { TableManager } from '@/components/TableManager';
 import { DataTable } from '@/components/DataTable';
 import { CardView } from '@/components/CardView';
 import { apiService } from '@/lib/api';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 
 function App() {
   const { 
@@ -39,6 +41,179 @@ function App() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isMobileView, setIsMobileView] = useState(false);
+  // 新增：當前操作用戶（後續可由 foundation 接入覆寫）
+  const [currentUserName, setCurrentUserName] = useState<string | null>(null);
+  const [currentRole, setCurrentRole] = useState<string | null>(null);
+  const [currentPermissions, setCurrentPermissions] = useState<string[]>([]);
+  const canAccessPermissionSettings = (currentRole === 'admin') || currentPermissions.includes('admin.manage');
+  const [isPermissionsDialogOpen, setIsPermissionsDialogOpen] = useState(false);
+  const [isPermissionsSettingsOpen, setIsPermissionsSettingsOpen] = useState(false);
+  const [targetUsername, setTargetUsername] = useState<string>('');
+  const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
+  // 新增：保護密碼登入的管理員與 Foundation 使用者列表
+  const [isPasswordAdmin, setIsPasswordAdmin] = useState<boolean>(false);
+  const [foundationUsers, setFoundationUsers] = useState<string[]>([]);
+  const [adminPassword, setAdminPassword] = useState('');
+  const ADMIN_PASSWORD = '20251028';
+
+  // 角色對應的默認權限（可二次調整）
+  const ROLE_DEFAULT_PERMS: Record<string, string[]> = {
+    '訪客': ['讀取'],
+    '編輯者': ['讀取', '寫入'],
+    '管理員': ['讀取', '寫入', '刪除', '管理'],
+    '擁有者': ['讀取', '寫入', '刪除', '管理'],
+  };
+  const handleAdminLogin = () => {
+    if (adminPassword.trim() === ADMIN_PASSWORD) {
+      try {
+        localStorage.setItem('currentUserName', 'admin');
+        localStorage.setItem('foundation_user_role', 'admin');
+        localStorage.setItem('foundation_user_permissions', JSON.stringify(['admin.manage']));
+        localStorage.setItem('admin_login_method', 'password');
+      } catch {}
+      setCurrentUserName('admin');
+      setCurrentRole('admin');
+      setCurrentPermissions((prev) => Array.from(new Set([...(prev || []), 'admin.manage'])));
+      setIsPasswordAdmin(true);
+      toast.success('管理員登入成功');
+      setIsLoginDialogOpen(false);
+      setAdminPassword('');
+    } else {
+      toast.error('密碼錯誤');
+    }
+  };
+
+  useEffect(() => {
+    try {
+      const name = localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name');
+      const role = localStorage.getItem('foundation_user_role');
+      const permsRaw = localStorage.getItem('foundation_user_permissions');
+      if (name) setCurrentUserName(name);
+      if (role) setCurrentRole(role);
+      if (permsRaw) {
+        try {
+          const parsed = JSON.parse(permsRaw);
+          if (Array.isArray(parsed)) setCurrentPermissions(parsed);
+          else if (typeof permsRaw === 'string' && permsRaw.includes(',')) setCurrentPermissions(permsRaw.split(',').map(s => s.trim()).filter(Boolean));
+        } catch {
+          if (typeof permsRaw === 'string' && permsRaw.includes(',')) setCurrentPermissions(permsRaw.split(',').map(s => s.trim()).filter(Boolean));
+        }
+      }
+    } catch (e) {
+      // 忽略本地存取錯誤
+    }
+  }, []);
+
+  // 新增：Foundation 使用者列表（從 localStorage）
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('foundation_user_list');
+      if (!raw) return;
+      let list: string[] = [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          list = parsed.filter((x) => typeof x === 'string');
+        }
+      } catch {
+        if (raw.includes(',')) {
+          list = raw.split(',').map((s) => s.trim()).filter(Boolean);
+        }
+      }
+      if (list.length > 0) {
+        setFoundationUsers(Array.from(new Set(list)));
+      }
+    } catch {}
+  }, []);
+
+  // 新增：密碼登入管理員保護狀態
+  useEffect(() => {
+    try {
+      const method = localStorage.getItem('admin_login_method');
+      setIsPasswordAdmin(method === 'password');
+    } catch {
+      setIsPasswordAdmin(false);
+    }
+  }, []);
+  const startFoundationLogin = () => {
+    const url = (import.meta as any).env?.VITE_FOUNDATION_LOGIN_URL || '';
+    if (!url) {
+      toast.error('未配置 Foundation 登入地址');
+      return;
+    }
+    window.open(url, 'foundationLogin');
+  };
+
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      const data = (event as any).data;
+      if (data && data.type === 'FOUNDATION_AUTH_SUCCESS' && data.username) {
+        try {
+          localStorage.setItem('foundation_user_name', data.username);
+        } catch {}
+        setCurrentUserName(data.username);
+        if (data.username === 'admin') {
+          try { localStorage.setItem('admin_login_method', 'foundation'); } catch {}
+          setIsPasswordAdmin(false);
+        }
+        // 合併至 Foundation 使用者列表
+        try {
+          const rawList = localStorage.getItem('foundation_user_list');
+          let list: string[] = [];
+          if (rawList) {
+            try {
+              const parsed = JSON.parse(rawList);
+              if (Array.isArray(parsed)) list = parsed.filter((x) => typeof x === 'string');
+            } catch {
+              if (rawList.includes(',')) list = rawList.split(',').map((s) => s.trim()).filter(Boolean);
+            }
+          }
+          list = Array.from(new Set([...(list || []), data.username]));
+          localStorage.setItem('foundation_user_list', JSON.stringify(list));
+          setFoundationUsers(list);
+        } catch {}
+        const foundationRole = typeof data.role === 'string' ? data.role : null;
+        const foundationPerms = Array.isArray(data.permissions) ? data.permissions : [];
+        if (foundationRole) {
+          try { localStorage.setItem('foundation_user_role', foundationRole); } catch {}
+          setCurrentRole(foundationRole);
+        }
+        let nextPerms = foundationPerms;
+        const isAdvanced = (
+          (foundationRole && foundationRole.toLowerCase() === 'admin') ||
+          nextPerms.includes('admin.manage') ||
+          (Array.isArray(data.groups) && data.groups.includes('permission-admin')) ||
+          data.isAdvanced === true
+        );
+        if (isAdvanced) {
+          nextPerms = Array.from(new Set([...(nextPerms || []), 'admin.manage']));
+        }
+        if (nextPerms && nextPerms.length > 0) {
+          try { localStorage.setItem('foundation_user_permissions', JSON.stringify(nextPerms)); } catch {}
+          setCurrentPermissions(nextPerms);
+        }
+        toast.success('Foundation 登入成功');
+        setIsLoginDialogOpen(false);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  const handleLogout = () => {
+    try {
+      localStorage.removeItem('currentUserName');
+      localStorage.removeItem('foundation_user_name');
+      localStorage.removeItem('foundation_user_role');
+      localStorage.removeItem('foundation_user_permissions');
+      localStorage.removeItem('admin_login_method');
+    } catch {}
+    setCurrentUserName(null);
+    setCurrentRole(null);
+    setCurrentPermissions([]);
+    setIsPasswordAdmin(false);
+    toast.success('已登出');
+  };
   // 新增：全域可回滾堆疊（支持連續回滾）
   const [undoStack, setUndoStack] = useState<Array<{ label: string; undo: () => Promise<void>; timestamp?: number; source?: string }>>([]);
   const [lastOpInfo, setLastOpInfo] = useState<{ label: string; timestamp?: number; source?: string } | null>(null);
@@ -80,6 +255,90 @@ function App() {
       loadHistory(t.id);
     }
   }, [activeTableId]);
+
+  // 歷史詳情狀態與輔助方法
+  const [isHistoryDetailOpen, setIsHistoryDetailOpen] = useState(false);
+  const [historyDetailEntry, setHistoryDetailEntry] = useState<HistoryEntry | null>(null);
+  const [historyDetailCurrent, setHistoryDetailCurrent] = useState<any | null>(null);
+  const [historyDetailPrevious, setHistoryDetailPrevious] = useState<any | null>(null);
+  const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
+
+  const openHistoryDetail = async (entry: HistoryEntry) => {
+    if (!activeTable) return;
+    setIsHistoryDetailOpen(true);
+    setHistoryDetailEntry(entry);
+    setHistoryDetailLoading(true);
+    try {
+      const current = await apiService.getHistoryEntry(activeTable.id, entry.id);
+      setHistoryDetailCurrent(current);
+      const idx = historyList.findIndex(e => e.id === entry.id);
+      const prevEntry = idx >= 0 ? historyList[idx + 1] : undefined; // 列表最新在上，上一版本為下一項
+      if (prevEntry) {
+        const prev = await apiService.getHistoryEntry(activeTable.id, prevEntry.id);
+        setHistoryDetailPrevious(prev);
+      } else {
+        setHistoryDetailPrevious(null);
+      }
+    } catch (e) {
+      console.error('載入歷史詳情失敗:', e);
+    } finally {
+      setHistoryDetailLoading(false);
+    }
+  };
+
+  const computeSnapshotDiff = (prevSnap?: any, currSnap?: any) => {
+    const result: Array<{ rowId: string; changes: Array<{ columnId: string; before: any; after: any }> }> = [];
+    if (!currSnap || !currSnap.rows) return result;
+    const prevById: Record<string, any> = {};
+    (prevSnap?.rows || []).forEach((r: any) => { if (r?.id) prevById[r.id] = r; });
+    const columns: Array<{ id: string; name?: string }> = currSnap.columns || [];
+    (currSnap.rows || []).forEach((row: any) => {
+      const rid = row?.id;
+      if (!rid) return;
+      const prev = prevById[rid];
+      const changes: Array<{ columnId: string; before: any; after: any }> = [];
+      columns.forEach((col: any) => {
+        const cid = col.id;
+        const before = prev ? prev[cid] : undefined;
+        const after = row[cid];
+        const normalize = (v: any) => {
+          if (v && typeof v === 'object') {
+            try { return JSON.stringify(v); } catch { return String(v); }
+          }
+          return v;
+        };
+        if (normalize(before) !== normalize(after)) {
+          changes.push({ columnId: cid, before, after });
+        }
+      });
+      if (!prev) {
+        // 新增行：如果沒有欄位差異，補上一份所有欄位的狀態
+        if (changes.length === 0) {
+          columns.forEach((col: any) => {
+            const cid = col.id;
+            const after = row[cid];
+            changes.push({ columnId: cid, before: undefined, after });
+          });
+        }
+      }
+      if (changes.length > 0) {
+        result.push({ rowId: rid, changes });
+      }
+    });
+    // 刪除行：存在於 prev 但不存在於 curr
+    const currIds = new Set((currSnap.rows || []).map((r: any) => r.id));
+    (prevSnap?.rows || []).forEach((r: any) => {
+      if (!currIds.has(r.id)) {
+        const changes: Array<{ columnId: string; before: any; after: any }> = [];
+        (prevSnap.columns || []).forEach((col: any) => {
+          const cid = col.id;
+          changes.push({ columnId: cid, before: r[cid], after: undefined });
+        });
+        result.push({ rowId: r.id, changes });
+      }
+    });
+    return result;
+  };
 
   // 相對時間格式（中文）：將毫秒時間戳轉為「x 分鐘前 / x 秒前 / x 小時前」
   const formatRelativeTime = (ts?: number) => {
@@ -404,6 +663,28 @@ function App() {
           
           {/* 反馈建议入口 - 放置在页面的最底部 */}
           <div className="mt-auto p-4 border-t border-border">
+            {/* 當前操作用戶顯示（為後續 foundation 登錄打底） */}
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <div className="flex items-center justify-center text-sm text-muted-foreground mb-2 cursor-context-menu select-none">
+                  <User className={`w-4 h-4 mr-2 ${currentUserName ? 'text-green-600' : 'text-muted-foreground'}`} />
+                  <span className={currentUserName ? 'text-green-600 font-medium' : 'text-muted-foreground'}>
+                    {currentUserName || '未登入'}
+                  </span>
+                  {!currentUserName && (
+                    <button className="ml-2 px-2 py-1 rounded bg-primary text-primary-foreground" onClick={() => setIsLoginDialogOpen(true)}>登入</button>
+                  )}
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="min-w-[180px]">
+                <ContextMenuItem onClick={handleLogout}>登出</ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onClick={() => setIsPermissionsDialogOpen(true)}>查看權限</ContextMenuItem>
+                {canAccessPermissionSettings && (
+                  <ContextMenuItem onClick={() => setIsPermissionsSettingsOpen(true)}>權限設置</ContextMenuItem>
+                )}
+              </ContextMenuContent>
+            </ContextMenu>
             <a 
               href="https://omeoffice.com/usageFeedback" 
               target="_blank" 
@@ -412,6 +693,283 @@ function App() {
             >
               反馈建议入口
             </a>
+            {/* 權限顯示映射與工具
+              const PERMISSION_MAP: Record<string, { label: string; category: string; description: string; critical?: boolean }> = {
+                'tables.read': { label: '讀取表格', category: '表格', description: '查看子表與欄位結構' },
+                'tables.write': { label: '修改表格', category: '表格', description: '建立/刪除子表，調整欄位', critical: true },
+                'rows.read': { label: '讀取行', category: '數據', description: '查看行數據與附件' },
+                'rows.write': { label: '修改行', category: '數據', description: '新增/編輯/刪除行數據', critical: true },
+                'files.upload': { label: '上傳附件', category: '文件', description: '向指定列上傳附件' },
+                'history.read': { label: '查看歷史', category: '版本', description: '查看版本歷史與差異' },
+                'history.write': { label: '回溯版本', category: '版本', description: '清除或回溯版本', critical: true },
+                'admin.manage': { label: '系統管理', category: '系統', description: '管理使用者與權限', critical: true },
+              };
+              const ALL_PERMS = Object.keys(PERMISSION_MAP);
+              const getEffectivePermissions = (role: string | null, perms: string[]) => {
+                if (role === 'admin') return ALL_PERMS;
+                return Array.isArray(perms) ? perms : [];
+              };
+              const groupByCategory = (perms: string[]) => {
+                const groups: Record<string, string[]> = {};
+                perms.forEach((p) => {
+                  const cat = PERMISSION_MAP[p]?.category || '其他';
+                  if (!groups[cat]) groups[cat] = [];
+                  groups[cat].push(p);
+                });
+                return groups;
+              };
+              const getPermissionLabel = (p: string) => PERMISSION_MAP[p]?.label || p;
+              const getPermissionDesc = (p: string) => PERMISSION_MAP[p]?.description || '無描述';
+              const isCritical = (p: string) => !!PERMISSION_MAP[p]?.critical;
+            {/* 權限查看對話框（放置於頁面中，使用 Portal 呈現） */}
+            <Dialog open={isPermissionsDialogOpen} onOpenChange={setIsPermissionsDialogOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>查看權限</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 text-sm">
+                  
+
+                  {(() => {
+                    const PERMISSION_MAP: Record<string, { label: string; category: string; description: string; critical?: boolean }> = {
+                      'tables.read': { label: '查看子表與欄位結構', category: '表格', description: '查看表' },
+                      'tables.write': { label: '建立/刪除子表，調整欄位', category: '表格', description: '改寫表', critical: true },
+                      'rows.read': { label: '查看行數據與附件', category: '數據', description: '查看行' },
+                      'rows.write': { label: '新增/編輯/刪除行數據', category: '數據', description: '改寫行', critical: true },
+                      'files.upload': { label: '向指定行上傳附件', category: '文件', description: '上傳附件' },
+                      'history.read': { label: '查看版本歷史與差異', category: '版本', description: '版本記錄' },
+                      'history.write': { label: '清除或回溯版本', category: '版本', description: '版本回溯', critical: true },
+                      'admin.manage': { label: '管理使用者與權限', category: '系統', description: '管理使用者與權限', critical: true },
+                    };
+                    const ALL_PERMS = Object.keys(PERMISSION_MAP);
+                    const getEffectivePermissions = (role: string | null, perms: string[]) => {
+                      if (role === 'admin') return ALL_PERMS;
+                      return Array.isArray(perms) ? perms : [];
+                    };
+                    const groupByCategory = (perms: string[]) => {
+                      const groups: Record<string, string[]> = {};
+                      perms.forEach((p) => {
+                        const cat = PERMISSION_MAP[p]?.category || '其他';
+                        if (!groups[cat]) groups[cat] = [];
+                        groups[cat].push(p);
+                      });
+                      return groups;
+                    };
+                    const getPermissionLabel = (p: string) => PERMISSION_MAP[p]?.label || p;
+                    const getPermissionDesc = (p: string) => PERMISSION_MAP[p]?.description || '無描述';
+                    const isCritical = (p: string) => !!PERMISSION_MAP[p]?.critical;
+                    const roleKey = (currentRole || '').toLowerCase();
+                    const roleStyle = roleKey === 'admin'
+                      ? 'bg-red-50 border-red-300 text-red-700'
+                      : roleKey === 'editor'
+                        ? 'bg-blue-50 border-blue-300 text-blue-700'
+                        : roleKey === 'member'
+                          ? 'bg-teal-50 border-teal-300 text-teal-700'
+                          : 'bg-gray-50 border-gray-300 text-gray-700';
+                    const effective = getEffectivePermissions(currentRole, currentPermissions);
+                    const critical = effective.filter(isCritical);
+                    const groups = groupByCategory(effective);
+                    const total = effective.length;
+                    const ordered = effective.slice().sort((a, b) => Number(isCritical(b)) - Number(isCritical(a)));
+                    return (
+                      <>
+                        <div className="mb-3 space-y-3">
+                          <div className={`rounded-lg border px-3 py-2 text-sm ${roleStyle}`}>
+                            <span className="font-semibold">當前角色：</span>
+                            <span className="font-bold">{currentRole || '未設定'}</span>
+                            <span className="ml-3 text-xs opacity-70">權限數：{total}</span>
+                          </div>
+
+                        </div>
+
+                        <details className="mb-4" open>
+                          <summary className="cursor-pointer font-semibold">角色說明</summary>
+                          <div className="mt-2 text-sm text-gray-600">
+                            {(() => {
+                              const roleDescMap: Record<string, string> = {
+                                admin: '擁有所有系統與數據管理權限，可建立/刪除表格、調整欄位、編輯行、管理使用者與權限。',
+                                editor: '可讀寫數據並調整部分結構，但無法進行系統級管理操作。',
+                                member: '可讀寫數據，不可變更表格結構或管理使用者。',
+                                viewer: '僅可讀取數據與歷史，無任何寫入或結構調整權限。',
+                              };
+                              const roleKey = (currentRole || '').toLowerCase();
+                              return roleDescMap[roleKey] || '角色資訊未定義，請聯絡管理員以確認您的權限範圍。';
+                            })()}
+                          </div>
+                        </details>
+
+                        <details className="border rounded-lg p-3" open={false}>
+                           <summary className="cursor-pointer font-semibold flex items-center justify-between">
+                             <span>權限詳情</span>
+                             <span className="text-xs text-muted-foreground">{effective.length} 項</span>
+                           </summary>
+                           <ul className="mt-2 divide-y divide-muted/30">
+                             {ordered.map((p) => (
+                               <li key={p} className="py-2 flex items-start gap-3">
+                                 <span className={`inline-flex items-center justify-center text-center rounded-sm border px-2 py-0.5 text-xs font-medium shrink-0 w-20 ${isCritical(p) ? 'border-destructive/40 bg-destructive/10 text-destructive' : 'border-muted/40 bg-muted/20 text-muted-foreground'}`}>
+                                   {isCritical(p) ? 'CRITICAL' : '標準'}
+                                 </span>
+                                 <span className="w-40 sm:w-56 md:w-72 shrink-0 font-semibold">
+                                   {getPermissionLabel(p)}
+                                 </span>
+                                 <span className="flex-1 text-xs text-muted-foreground" title={getPermissionDesc(p)} style={{ display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                                   {getPermissionDesc(p)}
+                                 </span>
+                               </li>
+                             ))}
+                           </ul>
+                         </details>
+
+
+
+                        <div className="rounded-lg border border-muted/40 p-3">
+                          <div className="text-xs text-muted-foreground">
+                            權限來源：本地登入或 Foundation 授權；不同來源的權限策略可能不同。
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            {/* 登入對話框 */}
+            <Dialog open={isLoginDialogOpen} onOpenChange={setIsLoginDialogOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>登入</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3">
+                  <div className="text-sm text-muted-foreground">請使用 Foundation 帳號驗證登入，或以管理員密碼登入。</div>
+                  <Button onClick={startFoundationLogin} className="w-full">使用 Foundation 登入</Button>
+                  <div className="space-y-2 pt-2">
+                    <Label htmlFor="adminPassword">管理員密碼</Label>
+                    <Input id="adminPassword" type="password" placeholder="輸入管理員密碼" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
+                    <Button variant="secondary" className="w-full" onClick={handleAdminLogin}>管理員登入</Button>
+                  </div>
+                  <Button variant="outline" className="w-full" onClick={() => setIsLoginDialogOpen(false)}>取消</Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            {/* 權限設定對話框 */}
+            {canAccessPermissionSettings && (
+              <Dialog open={isPermissionsSettingsOpen} onOpenChange={setIsPermissionsSettingsOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>權限設置</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="text-sm text-muted-foreground">在同一對話框選擇角色 + 勾選權限，保存時同步到後端。</div>
+
+                  {/* 目標使用者 */}
+                  <div className="space-y-2">
+                    <Label htmlFor="targetUsername">目標使用者</Label>
+                    <div className="flex items-center gap-2">
+                      <Input id="targetUsername" value={targetUsername} onChange={(e) => setTargetUsername(e.target.value)} placeholder="輸入要設置的使用者帳號才能選擇角色" />
+                      {foundationUsers.length > 0 && (
+                        <Select value={targetUsername} onValueChange={(val) => setTargetUsername(val)}>
+                          <SelectTrigger size="sm" className="min-w-[200px]">
+                            <SelectValue placeholder="從 Foundation 選擇" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {foundationUsers.map((u) => (
+                              <SelectItem key={u} value={u}>{u}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                    
+                    {(targetUsername === 'admin' && isPasswordAdmin) && (
+                      <div className="text-xs text-red-600">不可修改使用密碼登入的管理員賬號權限</div>
+                    )}
+                  </div>
+
+                  {/* 角色選擇 */}
+                  <div className="space-y-2">
+                    <Label>角色選擇</Label>
+
+                    <Select value={currentRole || ''} onValueChange={(val) => {
+                      setCurrentRole(val);
+                      const defaults = ROLE_DEFAULT_PERMS[val] || [];
+                      setCurrentPermissions(defaults);
+                    }}>
+                      <SelectTrigger size="sm" className="w-full" disabled={!targetUsername || (targetUsername === 'admin' && isPasswordAdmin)}>
+                        <SelectValue placeholder={(targetUsername === 'admin' && isPasswordAdmin) ? '不可修改使用密碼登入的管理員賬號權限' : (!targetUsername ? '未選擇賬號，角色與權限操作將被禁用' : '選擇角色')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        
+                        <SelectItem value="訪客" disabled={!targetUsername}>訪客</SelectItem>
+                        <SelectItem value="編輯者" disabled={!targetUsername}>編輯者</SelectItem>
+                        <SelectItem value="管理員" disabled={!targetUsername}>管理員</SelectItem>
+                        <SelectItem value="擁有者" disabled={!targetUsername}>擁有者</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* 權限勾選 */}
+                  <div className="space-y-2">
+                    <Label>權限勾選</Label>
+                    <div className="flex flex-col gap-2 text-sm">
+                      {['讀取', '寫入', '刪除', '管理'].map((perm) => (
+                        <label key={perm} className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={currentPermissions.includes(perm)}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setCurrentPermissions((prev) => {
+                                const set = new Set(prev);
+                                if (checked) set.add(perm); else set.delete(perm);
+                                return Array.from(set);
+                              });
+                            }}
+                           disabled={!targetUsername || (targetUsername === 'admin' && isPasswordAdmin)}
+                          />
+                          <span>{perm}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setIsPermissionsSettingsOpen(false)}>取消</Button>
+
+                    <Button size="sm" disabled={!targetUsername || (targetUsername === 'admin' && isPasswordAdmin)} onClick={async () => {
+                       const target = (targetUsername || currentUserName);
+                       if (!target) {
+                         toast.error('請先輸入目標使用者或登入');
+                         return;
+                       }
+                      if (target === 'admin' && isPasswordAdmin) {
+                        toast.error('不可修改使用密碼登入的管理員賬號權限');
+                        return;
+                      }
+                       try {
+                         await apiService.updateUserSettings(target, {
+                           role: currentRole || null,
+                           permissions: currentPermissions,
+                         });
+                        // 僅在編輯自身時同步本地存儲
+                        if (target === currentUserName) {
+                          try {
+                            localStorage.setItem('foundation_user_role', currentRole || '');
+                            localStorage.setItem('foundation_user_permissions', JSON.stringify(currentPermissions));
+                          } catch {}
+                        }
+                        toast.success('已保存角色與權限（已同步後端）');
+                        setIsPermissionsSettingsOpen(false);
+                      } catch (e) {
+                        console.error('保存到後端失敗', e);
+                        toast.error('保存到後端失敗');
+                      }
+                    }}>保存</Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>)}
           </div>
         </div>
 
@@ -508,12 +1066,11 @@ function App() {
                         ) : (
                           [...(historyList || [])].map((entry) => (
                             <DropdownMenuItem key={entry.id} onClick={() => {
-                              setPendingRevertEntry(entry);
-                              setIsRevertDialogOpen(true);
+                              openHistoryDetail(entry);
                             }}>
                               <div className="flex flex-col">
                                 <span className="text-sm">{entry.label || entry.id}</span>
-                                <span className="text-xs text-muted-foreground">{formatLocalTime(entry.created_at)} · {entry.source || '未知來源'}</span>
+                                <span className="text-xs text-muted-foreground">{formatLocalTime(entry.created_at)} · {entry.source || '未知來源'} · {entry.actor ? `由 ${entry.actor}` : '未知用戶'}</span>
                               </div>
                             </DropdownMenuItem>
                           ))
@@ -571,6 +1128,71 @@ function App() {
                         </AlertDialogFooter>
                       </AlertDialogContent>
                     </AlertDialog>
+
+                    {/* 歷史詳情對話框：顯示使用者、時間與資料差異 */}
+                    <Dialog open={isHistoryDetailOpen} onOpenChange={setIsHistoryDetailOpen}>
+                      <DialogContent className="max-w-2xl">
+                        <DialogHeader>
+                          <DialogTitle>歷史詳情</DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-2">
+                          <div className="text-sm">操作：{historyDetailEntry?.label || historyDetailEntry?.id}</div>
+                          <div className="text-sm">用戶：{historyDetailEntry?.actor || '未知用戶'}</div>
+                          <div className="text-sm">來源：{historyDetailEntry?.source || '未知來源'}</div>
+                          <div className="text-sm">時間：{historyDetailEntry ? formatLocalTime(historyDetailEntry.created_at) : ''}</div>
+                        </div>
+                        {historyDetailLoading ? (
+                          <div className="text-sm text-muted-foreground">載入中...</div>
+                        ) : (
+                          <div className="mt-4">
+                            <div className="text-sm font-medium mb-2">數據變更：</div>
+                            {(() => {
+                              const diffs = computeSnapshotDiff(historyDetailPrevious?.snapshot, historyDetailCurrent?.snapshot);
+                              if (!diffs || diffs.length === 0) {
+                                return <div className="text-sm text-muted-foreground">未檢測到可視化差異（或為初始快照）。</div>;
+                              }
+                              return (
+                                <div className="space-y-3 max-h-64 overflow-auto pr-2">
+                                  {diffs.map(d => (
+                                    <div key={d.rowId} className="border rounded p-2">
+                                      <div className="text-xs text-muted-foreground mb-1">行 ID：{d.rowId}</div>
+                                      {d.changes.map(ch => (
+                                        <div key={ch.columnId} className="text-sm">
+                                          <span className="font-medium">{ch.columnId}</span>
+                                          <span className="mx-2 text-muted-foreground">→</span>
+                                          <span className="line-through mr-1">{typeof ch.before === 'object' ? JSON.stringify(ch.before) : String(ch.before ?? '')}</span>
+                                          <span className="ml-1">{typeof ch.after === 'object' ? JSON.stringify(ch.after) : String(ch.after ?? '')}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        )}
+                        <div className="mt-4 flex justify-end gap-2">
+                          <Button variant="outline" onClick={() => setIsHistoryDetailOpen(false)}>關閉</Button>
+                          <Button variant="default" onClick={async () => {
+                            if (!activeTable || !historyDetailEntry) return;
+                            try {
+                              await apiService.revertToHistory(activeTable.id, historyDetailEntry.id);
+                              setLastOpInfo({ label: `切換版本 | ${historyDetailEntry.label || historyDetailEntry.id}`, source: historyDetailEntry.source || '歷史', timestamp: Date.now() });
+                              toast.success('已切換到所選版本');
+                              setIsHistoryDetailOpen(false);
+                              setHistoryDetailEntry(null);
+                              refresh();
+                              await loadHistory(activeTable.id);
+                              await apiService.createHistorySnapshot(activeTable.id, { label: `切換版本 | ${historyDetailEntry.label || historyDetailEntry.id}`, source: '歷史' });
+                              await loadHistory(activeTable.id);
+                            } catch (e) {
+                              console.error('切換版本失敗:', e);
+                              toast.error('切換版本失敗');
+                            }
+                          }}>回溯到此版本</Button>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
   
                        <Button variant="outline" size="sm" onClick={exportData}>
                          <Download className="w-4 h-4 mr-2" />

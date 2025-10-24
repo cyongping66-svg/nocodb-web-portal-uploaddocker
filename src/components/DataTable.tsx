@@ -277,6 +277,7 @@ export function DataTable({
   onBatchUpdateRows,
   onSetLastOperation,
 }: DataTableProps) {
+  const isAuthenticated = () => !!(localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name'));
   // 直接使用原始的onUpdateTable函数，不再使用localStorage
   const onUpdateTable = async (updatedTable: Table) => {
     // 调用原始的onUpdateTable函数并等待其完成（包含後端持久化行順序等）
@@ -733,6 +734,7 @@ export function DataTable({
   };
 
   const triggerReupload = async (rowId: string, columnId: string) => {
+  if (!isAuthenticated()) { toast.error('未登入，禁止上傳'); return; }
     setFileContextMenu(null);
     const input = document.createElement('input');
     input.type = 'file';
@@ -782,6 +784,7 @@ export function DataTable({
   };
 
   const deleteFileFromCell = async (rowId: string, columnId: string) => {
+  if (!isAuthenticated()) { toast.error('未登入，禁止刪除附件'); return; }
     // 記錄刪除前的舊值，以支援撤回
     const prevRow = table.rows.find(r => r.id === rowId);
     const prevValue = prevRow ? (prevRow as any)[columnId] : null;
@@ -1047,6 +1050,7 @@ export function DataTable({
   };
 
   const addRow = async () => {
+  if (!isAuthenticated()) { toast.error('未登入，禁止新增'); return; }
     try {
       // 新增前，先將當前資料保存到本地資料庫（不顯示成功提示）
       if (onUpdateRow) {
@@ -1116,6 +1120,7 @@ export function DataTable({
   };
 
   const deleteRow = (rowId: string) => {
+  if (!isAuthenticated()) { toast.error('未登入，禁止刪除'); return; }
     // 快照：被刪除行與其位置
     const deletedIndex = table.rows.findIndex(r => r.id === rowId);
     const deletedRow = table.rows.find(r => r.id === rowId);
@@ -1193,6 +1198,7 @@ export function DataTable({
   };
 
   const saveEdit = (overrideValue?: any) => {
+  if (!isAuthenticated()) { toast.error('未登入，禁止編輯'); return; }
     if (!editingCell) return;
 
     const column = table.columns.find(col => col.id === editingCell.columnId);
@@ -1331,6 +1337,7 @@ export function DataTable({
   };
 
   const handleFileUpload = async (rowId: string, columnId: string, file: File) => {
+  if (!isAuthenticated()) { toast.error('未登入，禁止上傳'); return; }
     try {
       // 上傳前先記錄舊值，以支援撤回
       const prevRow = table.rows.find(r => r.id === rowId);
