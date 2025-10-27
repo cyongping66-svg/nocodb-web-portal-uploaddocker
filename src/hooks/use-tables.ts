@@ -146,7 +146,12 @@ export function useTables() {
       // 新增：持久化保存行順序（若有行數據）改用後端API
       if (updatedTable.rows && Array.isArray(updatedTable.rows)) {
         const orderIds = updatedTable.rows.map(r => r.id)
-        await apiService.setRowOrder(updatedTable.id, orderIds)
+        try {
+          await apiService.setRowOrder(updatedTable.id, orderIds)
+        } catch (err) {
+          // 行順序保存失敗不再視為致命錯誤，僅記錄日誌，避免打擹rer使用者
+          console.warn('setRowOrder failed, will continue without toast:', err)
+        }
       }
       
       // 更新本地狀態

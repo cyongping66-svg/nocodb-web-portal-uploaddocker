@@ -341,10 +341,96 @@ export function DataTable({
   const [selectOpen, setSelectOpen] = useState(false);
   const [isAddColumnOpen, setIsAddColumnOpen] = useState(false);
   // 为newColumn添加isMultiSelect属性的支持
-  const [newColumn, setNewColumn] = useState({ name: '', type: 'text' as Column['type'], options: [''], isMultiSelect: false });
+  const [newColumn, setNewColumn] = useState({ name: '', type: 'text' as Column['type'], options: [''], isMultiSelect: false, dictRef: undefined as { tableId: string; columnId: string } | undefined });
   const [configColumnId, setConfigColumnId] = useState<string | null>(null);
-  const [configForm, setConfigForm] = useState<{ name: string; type: Column['type']; options: string[]; isMultiSelect: boolean } | null>(null);
+  const [configForm, setConfigForm] = useState<{ name: string; type: Column['type']; options: string[]; isMultiSelect: boolean; dictRef?: { tableId: string; columnId: string } } | null>(null);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+
+  // 系統子表（字典來源）列表
+  const [allTables, setAllTables] = useState<Table[]>([]);
+  const [tablesLoading, setTablesLoading] = useState<boolean>(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        setTablesLoading(true);
+        const ts = await apiService.getTables();
+        setAllTables(Array.isArray(ts) ? ts : []);
+      } catch (e) {
+        console.warn('載入系統子表失敗', e);
+      } finally {
+        setTablesLoading(false);
+      }
+    })();
+  }, []);
+
+  // 字典選項快取：key = `${tableId}:${columnId}`
+  const [dictOptionsCache, setDictOptionsCache] = useState<{ [key: string]: string[] }>({});
+  const getDictKey = (c: Column) => (c.dictRef && c.dictRef.tableId && c.dictRef.columnId) ? `${c.dictRef.tableId}:${c.dictRef.columnId}` : '';
+  const getSelectOptions = (c: Column) => {
+    // 防止關聯自身欄位造成無意義的字典選項
+    if (c.dictRef && c.dictRef.tableId === table.id && c.dictRef.columnId === c.id) return [];
+    const k = getDictKey(c);
+    if (k) {
+      const base = dictOptionsCache[k] || [];
+      const dictTable = allTables.find(t => t.id === c.dictRef!.tableId);
+      const dictCol = dictTable?.columns?.find((dc: Column) => dc.id === c.dictRef!.columnId);
+      // 若字典欄位本身是 select，合併其定義的 options（包含尚未在子表資料中出現的）
+      let definedOpts: string[] = [];
+      if (dictCol?.type === 'select' && Array.isArray(dictCol?.options)) {
+        definedOpts = (dictCol.options as string[]).map(v => String(v));
+      }
+      const union = Array.from(new Set<string>([...definedOpts, ...base]));
+      return union;
+    }
+    return c.type === 'select' ? (c.options || []) : [];
+  };
+
+  useEffect(() => {
+    // 預抓取所有帶有 dictRef 的欄位的字典選項
+    (async () => {
+      const cols = (table.columns || []).filter(c => c.dictRef && c.dictRef.tableId && c.dictRef.columnId && !(c.dictRef.tableId === table.id && c.dictRef.columnId === c.id));
+      for (const c of cols) {
+        const key = getDictKey(c);
+        if (!key) continue;
+        // 若尚未快取或需要刷新，則抓取
+        if (!(key in dictOptionsCache)) {
+          try {
+            const rows = await apiService.getTableRows(c.dictRef!.tableId);
+            // 依字典列型別正規化值（日期→ISO），其他保持字串；若字典列為多選，展開陣列中的各項
+            const dictTable = allTables.find(t => t.id === c.dictRef!.tableId);
+            const dictCol = dictTable?.columns?.find((dc: Column) => dc.id === c.dictRef!.columnId);
+            const isDateDict = dictCol?.type === 'date';
+            const isMultiSelectDict = dictCol?.type === 'select' && !!dictCol?.isMultiSelect;
+            const collect = (val: any): string => {
+              if (val === null || val === undefined || val === '') return '';
+              if (isDateDict) {
+                const d = new Date(String(val));
+                return isNaN(d.getTime()) ? '' : d.toISOString();
+              }
+              return String(val);
+            };
+            const setVals = new Set<string>();
+            for (const r of (rows || [])) {
+              const raw = r[c.dictRef!.columnId];
+              if (Array.isArray(raw) && isMultiSelectDict) {
+                for (const item of raw) {
+                  const v = collect(item);
+                  if (v) setVals.add(v);
+                }
+              } else {
+                const v = collect(raw);
+                if (v) setVals.add(v);
+              }
+            }
+            const values: string[] = Array.from(setVals);
+            setDictOptionsCache(prev => ({ ...prev, [key]: values }));
+          } catch (e) {
+            console.warn('載入字典選項失敗', e);
+          }
+        }
+      }
+    })();
+  }, [table.columns, allTables]);
 
   const openColumnConfig = (columnId: string) => {
     const col = table.columns.find(c => c.id === columnId);
@@ -355,11 +441,21 @@ export function DataTable({
       type: col.type,
       options: col.options ? [...col.options] : [''],
       isMultiSelect: !!col.isMultiSelect,
+      dictRef: col.dictRef,
     });
   };
 
   const saveColumnConfig = async () => {
     if (!configColumnId || !configForm) return;
+
+    // 禁止將字典來源設置為自身欄位
+    if (configForm.dictRef && configForm.dictRef.tableId && configForm.dictRef.columnId) {
+      const isSelf = configForm.dictRef.tableId === table.id && configForm.dictRef.columnId === configColumnId;
+      if (isSelf) {
+        toast.error('不允許將字典子表關聯至自身欄位');
+        return;
+      }
+    }
 
     // 中文註釋：先構造更新後的欄位定義（包含名稱、類型、選項、是否多選）
     const updatedColumns = table.columns.map(col =>
@@ -368,8 +464,15 @@ export function DataTable({
             ...col,
             name: configForm.name.trim() || col.name,
             type: configForm.type,
-            options: configForm.type === 'select' ? configForm.options.filter(o => o.trim()) : undefined,
+            options: (() => {
+              const dict = (configForm.dictRef && configForm.dictRef.tableId && configForm.dictRef.columnId) ? configForm.dictRef : undefined;
+              return dict ? undefined : (configForm.type === 'select' ? configForm.options.filter(o => o.trim()) : undefined);
+            })(),
             isMultiSelect: configForm.type === 'select' ? !!configForm.isMultiSelect : undefined,
+            dictRef: (() => {
+              const dict = (configForm.dictRef && configForm.dictRef.tableId && configForm.dictRef.columnId) ? configForm.dictRef : undefined;
+              return dict;
+            })(),
           }
         : col
     );
@@ -378,7 +481,8 @@ export function DataTable({
     const targetOldColumn = table.columns.find(c => c.id === configColumnId);
     const isSelectType = targetOldColumn?.type === 'select';
     const oldOptions: string[] = Array.isArray(targetOldColumn?.options) ? (targetOldColumn?.options as string[]) : [];
-    const newOptions: string[] = configForm.type === 'select' ? configForm.options.filter(o => o.trim()) : [];
+    const hasValidDictRef = (configForm.type === 'select' && configForm.dictRef && configForm.dictRef.tableId && configForm.dictRef.columnId);
+    const newOptions: string[] = (configForm.type === 'select' && !hasValidDictRef) ? configForm.options.filter(o => o.trim()) : [];
 
     // 中文註釋：位置對齊映射（方案 A）——舊選項第 i 項映射到新選項第 i 項
     const renameMap: Record<string, string> = {};
@@ -960,9 +1064,10 @@ export function DataTable({
       id: Date.now().toString(),
       name: newColumn.name.trim(),
       type: newColumn.type,
-      options: newColumn.type === 'select' ? newColumn.options.filter(opt => opt.trim()) : undefined,
+      options: newColumn.type === 'select' && !newColumn.dictRef ? newColumn.options.filter(opt => opt.trim()) : undefined,
       // 添加isMultiSelect属性
-      isMultiSelect: newColumn.type === 'select' ? newColumn.isMultiSelect : undefined
+      isMultiSelect: newColumn.type === 'select' ? newColumn.isMultiSelect : undefined,
+      dictRef: newColumn.dictRef
     };
 
     // 本地更新：新增欄位
@@ -992,7 +1097,7 @@ export function DataTable({
     });
 
     // 添加isMultiSelect属性，修复类型错误
-    setNewColumn({ name: '', type: 'text', options: [''], isMultiSelect: false });
+    setNewColumn({ name: '', type: 'text', options: [''], isMultiSelect: false, dictRef: undefined });
     setIsAddColumnOpen(false);
     toast.success('欄位新增成功');
   };
@@ -1175,14 +1280,20 @@ export function DataTable({
           setEditValue(currentValue || currentValue === 0 ? String(currentValue) : '0');
           break;
         case 'date':
-          // 日期类型处理，确保格式正确
+          // 日期类型处理，确保格式正确（使用本地時間格式輸入）
           if (currentValue) {
-            const date = new Date(currentValue);
-            // 转换为日期时间本地输入格式（YYYY-MM-DDTHH:MM）
-            const formattedDate = isNaN(date.getTime()) 
-              ? '' 
-              : date.toISOString().slice(0, 16); // 截取到分钟
-            setEditValue(formattedDate);
+            const d = new Date(currentValue);
+            if (!isNaN(d.getTime())) {
+              const pad = (n: number) => String(n).padStart(2, '0');
+              const y = d.getFullYear();
+              const m = pad(d.getMonth() + 1);
+              const da = pad(d.getDate());
+              const h = pad(d.getHours());
+              const mi = pad(d.getMinutes());
+              setEditValue(`${y}-${m}-${da}T${h}:${mi}`);
+            } else {
+              setEditValue('');
+            }
           } else {
             setEditValue('');
           }
@@ -1210,25 +1321,44 @@ export function DataTable({
     // 根据列类型进行正确的数据类型转换
     if (column.type === 'number') {
       // 数字类型转换 - 确保处理各种边界情况
-      if (editValue === null || editValue === undefined || editValue === '') {
+      if (processedValue === null || processedValue === undefined || processedValue === '') {
         processedValue = 0;
       } else {
-        const numValue = parseFloat(editValue as string);
+        const numValue = parseFloat(String(processedValue));
         processedValue = isNaN(numValue) ? 0 : numValue;
       }
     } else if (column.type === 'boolean') {
       // 布尔值类型转换 - 支持多种输入格式
-      // 添加类型安全检查，确保editValue是字符串类型
-      const stringValue = typeof editValue === 'string' ? editValue : String(editValue);
+      const stringValue = typeof processedValue === 'string' ? processedValue : String(processedValue);
       processedValue = stringValue === 'true' || stringValue === '1';
     } else if (column.type === 'date') {
-        // 日期类型转换
-        if (editValue) {
-          // 确保editValue是有效的字符串类型
-          const dateString = Array.isArray(editValue) ? editValue[0] || '' : editValue;
-          const date = new Date(dateString);
-        // 检查是否为有效日期
-        processedValue = isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+      // 日期类型转换（支持覆蓋值）——允許過去日期；以本地字串保存，避免時區造成日期偏移
+      if (processedValue) {
+        const raw = Array.isArray(processedValue) ? (processedValue[0] || '') : String(processedValue);
+        let stored: string | null = null;
+        // 已是標準 'YYYY-MM-DDTHH:mm' 或 'YYYY-MM-DD'，直接保存
+        if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) {
+          const d = new Date(raw);
+          stored = isNaN(d.getTime()) ? null : raw;
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+          const d = new Date(`${raw}T00:00`);
+          stored = isNaN(d.getTime()) ? null : raw;
+        } else {
+          // 其他情況：嘗試解析後以本地時間組字串
+          const d = new Date(raw);
+          if (!isNaN(d.getTime())) {
+            const pad = (n: number) => String(n).padStart(2, '0');
+            const y = d.getFullYear();
+            const m = pad(d.getMonth() + 1);
+            const da = pad(d.getDate());
+            const h = pad(d.getHours());
+            const mi = pad(d.getMinutes());
+            stored = `${y}-${m}-${da}T${h}:${mi}`;
+          } else {
+            stored = null;
+          }
+        }
+        processedValue = stored;
       } else {
         processedValue = null;
       }
@@ -1248,7 +1378,7 @@ export function DataTable({
     } else {
       // 其他类型保持不变
       // 空字符串应该保持为空字符串而不是null
-      processedValue = editValue === null ? '' : editValue;
+      processedValue = processedValue === null ? '' : processedValue;
     }
 
     // 獲取要更新的行
@@ -1798,12 +1928,13 @@ export function DataTable({
             autoFocus
           />
         );
-      } else if (column.type === 'select' && column.options) {
+      } else if (column.type === 'select') {
+        const columnOptions = getSelectOptions(column);
         // 检查是否为多选模式
         if (column.isMultiSelect) {
           // 多选模式
           const selectedValues = editValue ? (Array.isArray(editValue) ? editValue : [editValue]) : [];
-          const isAllSelected = selectedValues.length === column.options.length;
+          const isAllSelected = selectedValues.length === columnOptions.length;
           
           return (
             <div className="w-full" onClick={(e) => e.stopPropagation()}>
@@ -1841,7 +1972,7 @@ export function DataTable({
                       if (isAllSelected) {
                         setEditValue([]);
                       } else {
-                        setEditValue([...(column.options || [])]);
+                        setEditValue([...(columnOptions || [])]);
                       }
                     }}
                   >
@@ -1867,27 +1998,28 @@ export function DataTable({
                 </div>
                 
                 {/* 选项列表 - 使用组件级searchTerm进行过滤 */}
-                {column.options
+                {columnOptions
                   .filter(option => !searchTerm || option.toLowerCase().includes(searchTerm.toLowerCase()))
                   .map((option, index) => (
                   <div 
                     key={option} 
-                    className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors ${selectedValues.includes(option) ? 'bg-primary/10 border-primary/20' : 'hover:bg-muted'}`}
+                    className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors ${selectedValues.map(v => String(v)).includes(option) ? 'bg-primary/10 border-primary/20' : 'hover:bg-muted'}`}
                     onClick={(e) => {
                       e.stopPropagation();
+                      const current = selectedValues.map(v => String(v));
                       let newSelectedValues: string[];
-                      if (selectedValues.includes(option)) {
+                      if (current.includes(option)) {
                         // 取消选择
-                        newSelectedValues = selectedValues.filter(val => val !== option);
+                        newSelectedValues = current.filter(val => val !== option);
                       } else {
                         // 添加选择
-                        newSelectedValues = [...selectedValues, option];
+                        newSelectedValues = [...current, option];
                       }
                       setEditValue(newSelectedValues);
                     }}
                   >
                     <Checkbox 
-                      checked={selectedValues.includes(option)}
+                      checked={selectedValues.map(v => String(v)).includes(option)}
                       className="transition-all"
                     />
                     <div className="flex items-center gap-2">
@@ -1933,7 +2065,7 @@ export function DataTable({
                   <SelectValue placeholder="請選擇選項" />
                 </SelectTrigger>
                 <SelectContent onClick={(e) => e.stopPropagation()}>
-                  {column.options.map((option, index) => (
+                  {columnOptions.map((option, index) => (
                     <SelectItem key={option} value={option} onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-2">
                         <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
@@ -1962,6 +2094,105 @@ export function DataTable({
           />
         );
       } else {
+        const hasValidDict = !!(column.dictRef && column.dictRef.tableId && column.dictRef.columnId);
+        if (hasValidDict && column.type !== 'file' && column.type !== 'boolean') {
+          // 取得字典欄位資訊，判斷是否為日期型字典
+          const dictTable = allTables.find(t => t.id === column.dictRef?.tableId);
+          const dictCol = dictTable?.columns?.find((dc: Column) => dc.id === column.dictRef?.columnId);
+          const isDateDict = dictCol?.type === 'date';
+
+          // 構建選項列表
+          const columnOptions = getSelectOptions(column);
+
+          // 綁定值正規化：日期型字典改為 ISO 以便與選項匹配
+          const currentRaw = String((row as any)[column.id] ?? '');
+          let effectiveValue = currentRaw;
+          if (isDateDict) {
+            if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(currentRaw)) {
+              const d = new Date(currentRaw);
+              effectiveValue = isNaN(d.getTime()) ? currentRaw : d.toISOString();
+            } else if (/^\d{4}-\d{2}-\d{2}$/.test(currentRaw)) {
+              const d = new Date(`${currentRaw}T00:00`);
+              effectiveValue = isNaN(d.getTime()) ? currentRaw : d.toISOString();
+            }
+          }
+
+          const formatLabel = (v: string) => {
+            if (!isDateDict) return v;
+            const d = new Date(v);
+            return isNaN(d.getTime()) ? v : d.toLocaleString();
+          };
+
+          return (
+            <div className="w-full" onClick={(e) => e.stopPropagation()}>
+              <Select 
+                value={effectiveValue}
+                onValueChange={(val) => {
+                  setEditValue(val);
+                  saveEdit(val);
+                  toast.success('值已更新');
+                }}
+              >
+                <SelectTrigger className="h-8 w-full" onClick={(e) => e.stopPropagation()}>
+                  <SelectValue placeholder="請選擇字典值" />
+                </SelectTrigger>
+                <SelectContent onClick={(e) => e.stopPropagation()}>
+                  {isDateDict && (
+                    <div className="p-2 border-b">
+                      <div className="text-xs text-muted-foreground mb-1">自訂日期時間</div>
+                      <Input
+                        type="datetime-local"
+                        className="h-8 w-full"
+                        value={(function(){
+                          const d = new Date(currentRaw);
+                          if (!isNaN(d.getTime())) {
+                            const ys = d.getFullYear();
+                            const ms = String(d.getMonth()+1).padStart(2,'0');
+                            const ds = String(d.getDate()).padStart(2,'0');
+                            const hs = String(d.getHours()).padStart(2,'0');
+                            const mins = String(d.getMinutes()).padStart(2,'0');
+                            return `${ys}-${ms}-${ds}T${hs}:${mins}`;
+                          }
+                          return typeof editValue === 'string' ? editValue : '';
+                        })()}
+                        onChange={(e) => {
+                          setEditValue(e.target.value);
+                        }}
+                      />
+                      <Button 
+                        variant="default" 
+                        size="sm" 
+                        className="mt-2 h-8"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const v = typeof editValue === 'string' ? editValue : '';
+                          const d = new Date(v);
+                          const iso = isNaN(d.getTime()) ? '' : d.toISOString();
+                          if (iso) {
+                            setEditValue(iso);
+                            saveEdit(iso);
+                            toast.success('日期已更新');
+                            setEditingCell(null);
+                          } else {
+                            toast.error('請輸入有效日期');
+                          }
+                        }}
+                      >
+                        使用自訂
+                      </Button>
+                    </div>
+                  )}
+
+                  {columnOptions.map((option) => (
+                    <SelectItem key={option} value={option} onClick={(e) => e.stopPropagation()}>
+                      {formatLabel(option)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          );
+        }
         return (
           <Input
             // 添加空值检查，修复类型错误
@@ -2091,7 +2322,8 @@ export function DataTable({
         }
         // 如果日期无效，回退到简单替换T为空格（仍可能含秒）
         return <span className="text-sm">{String(value).replace('T', ' ')}</span>;
-      } else if (column.type === 'select' && column.options) {
+      } else if (column.type === 'select') {
+        const columnOptions = getSelectOptions(column);
         // 检查是否为多选模式
         if (column.isMultiSelect) {
           // 多选模式
@@ -2101,16 +2333,17 @@ export function DataTable({
             return (
               <div className="flex flex-wrap gap-1">
                 {selectedValues.map((selectedValue) => {
-                  if (column.options?.includes(selectedValue)) {
-                    const optionIndex = column.options.indexOf(selectedValue);
-                    const colorClass = getOptionColor(selectedValue, optionIndex);
+                  const displayVal = String(selectedValue);
+                  if (columnOptions?.includes(displayVal)) {
+                    const optionIndex = columnOptions.indexOf(displayVal);
+                    const colorClass = getOptionColor(displayVal, optionIndex);
                     
                     return (
                       <span 
-                        key={selectedValue} 
+                        key={displayVal} 
                         className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}
                       >
-                        {selectedValue}
+                        {displayVal}
                       </span>
                     );
                   }
@@ -2124,14 +2357,15 @@ export function DataTable({
           }
         } else {
           // 单选模式
-          if (value && column.options.includes(value)) {
+          const displayVal = value !== undefined && value !== null ? String(value) : '';
+          if (displayVal && columnOptions.includes(displayVal)) {
             // 為選項類型添加顏色標籤
-            const optionIndex = column.options.indexOf(value);
-            const colorClass = getOptionColor(value, optionIndex);
+            const optionIndex = columnOptions.indexOf(displayVal);
+            const colorClass = getOptionColor(displayVal, optionIndex);
             
             return (
               <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
-                {value}
+                {displayVal}
               </span>
             );
           } else {
@@ -2251,7 +2485,8 @@ export function DataTable({
                               </SelectContent>
                             </Select>
                           );
-                        } else if (column.type === 'select' && column.options) {
+                        } else if (column.type === 'select') {
+                          const columnOptions = getSelectOptions(column);
                           return (
                             <Select 
                               value={filters[column.id] || '__all__'} 
@@ -2270,7 +2505,7 @@ export function DataTable({
                                     全部
                                   </div>
                                 </SelectItem>
-                                {column.options.map((option, index) => (
+                                {columnOptions.map((option, index) => (
                                   <SelectItem key={option} value={option}>
                                     <div className="flex items-center gap-2">
                                       <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
@@ -2576,14 +2811,15 @@ export function DataTable({
                                   </SelectContent>
                                 </Select>
                               );
-                            } else if (column.type === 'select' && column.options) {
+                            } else if (column.type === 'select') {
+                              const columnOptions = getSelectOptions(column);
                               return (
                                 <Select value={batchEditValue} onValueChange={setBatchEditValue}>
                                   <SelectTrigger>
                                     <SelectValue placeholder="選擇選項" />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    {column.options.map((option, index) => (
+                                    {columnOptions.map((option, index) => (
                                       <SelectItem key={option} value={option}>
                                         <div className="flex items-center gap-2">
                                           <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
@@ -2700,6 +2936,62 @@ export function DataTable({
                     </SelectContent>
                   </Select>
                 </div>
+                <div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <Checkbox 
+                      id="new-use-dict"
+                      checked={!!newColumn.dictRef}
+                      onCheckedChange={(checked) => {
+                        const next = !!checked ? { tableId: newColumn.dictRef?.tableId || '', columnId: '' } : undefined;
+                        setNewColumn({ ...newColumn, dictRef: next });
+                      }}
+                    />
+                    <Label htmlFor="new-use-dict" className="cursor-pointer">使用字典子表</Label>
+                  </div>
+                  {newColumn.dictRef && (
+                    <div className="mt-2 space-y-2">
+                      <div>
+                        <Label htmlFor="new-dict-table">字典表</Label>
+                        <Select
+                          value={newColumn.dictRef.tableId}
+                          onValueChange={(value) => setNewColumn({ ...newColumn, dictRef: { tableId: value, columnId: '' } })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇字典表'} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {allTables.map((t) => (
+                              <SelectItem key={t.id} value={t.id}>{t.name || t.id}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="new-dict-column">字典列</Label>
+                        {(() => {
+                          const dictTable = allTables.find(t => t.id === newColumn.dictRef?.tableId);
+                          const dictCols: Column[] = dictTable?.columns || [];
+                          const sameTypeCols = dictCols.filter((c) => c.type === newColumn.type);
+                          return (
+                            <Select
+                              value={newColumn.dictRef.columnId}
+                              onValueChange={(value) => setNewColumn({ ...newColumn, dictRef: { tableId: newColumn.dictRef?.tableId || '', columnId: value } })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder={sameTypeCols.length === 0 ? '請先選擇字典表' : '選擇同類型字典列'} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {sameTypeCols.map((c) => (
+                                  <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
+                </div>
                 {newColumn.type === 'select' && (
                   <div>
                     <Label>選項</Label>
@@ -2795,31 +3087,147 @@ export function DataTable({
                         />
                         <Label htmlFor="config-is-multi" className="cursor-pointer">啟用多選模式</Label>
                       </div>
-                      {configForm.options.map((option, index) => (
-                        <div key={index} className="flex gap-2 mt-2">
-                          <Input
-                            value={option}
-                            onChange={(e) => {
-                              const newOptions = [...configForm.options];
-                              newOptions[index] = e.target.value;
-                              setConfigForm({ ...configForm, options: newOptions });
-                            }}
-                            placeholder={`選項 ${index + 1}`}
-                          />
-                          <Button type="button" variant="outline" size="sm" onClick={() => {
-                            // 中文註釋：刪除選項（僅在設定中暫存），真正影響行值的變更將在保存時進行確認與同步
-                            const newOptions = configForm.options.filter((_, i) => i !== index);
-                            setConfigForm({ ...configForm, options: newOptions.length ? newOptions : [''] });
-                          }}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                          {index === configForm.options.length - 1 && (
-                            <Button type="button" variant="outline" size="sm" onClick={() => setConfigForm({ ...configForm, options: [...configForm.options, ''] })}>
-                              <Plus className="w-4 h-4" />
-                            </Button>
-                          )}
+                      <div className="flex items-center gap-2 mt-2">
+                        <Checkbox
+                          id="config-use-dict"
+                          checked={!!configForm.dictRef}
+                          onCheckedChange={(checked) => {
+                            const next = !!checked ? { tableId: configForm.dictRef?.tableId || '', columnId: configForm.dictRef?.columnId || '' } : undefined;
+                            setConfigForm({ ...configForm, dictRef: next });
+                          }}
+                        />
+                        <Label htmlFor="config-use-dict" className="cursor-pointer">使用字典子表</Label>
+                      </div>
+                      {configForm.dictRef ? (
+                        <div className="mt-2 space-y-2">
+                          <div>
+                            <Label htmlFor="config-dict-table">字典表</Label>
+                            <Select
+                              value={configForm.dictRef.tableId}
+                              onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: value, columnId: '' } })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇字典表'} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {allTables.map((t) => (
+                                  <SelectItem key={t.id} value={t.id}>{t.name || t.id}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label htmlFor="config-dict-column">字典列</Label>
+                            {(() => {
+                              const dictTable = allTables.find(t => t.id === configForm.dictRef?.tableId);
+                              const dictCols: Column[] = dictTable?.columns || [];
+                              return (
+                                <Select
+                                  value={configForm.dictRef.columnId}
+                                  onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: configForm.dictRef?.tableId || '', columnId: value } })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder={dictCols.length === 0 ? '請先選擇字典表' : '選擇字典列'} />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {dictCols
+                                      .filter((c) => c.type === configForm.type && !(dictTable?.id === table.id && c.id === configColumnId))
+                                      .map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
+                                      ))}
+                                  </SelectContent>
+                                </Select>
+                              );
+                            })()}
+                          </div>
                         </div>
-                      ))}
+                      ) : (
+                        <>
+                          {configForm.options.map((option, index) => (
+                            <div key={index} className="flex gap-2 mt-2">
+                              <Input
+                                value={option}
+                                onChange={(e) => {
+                                  const newOptions = [...configForm.options];
+                                  newOptions[index] = e.target.value;
+                                  setConfigForm({ ...configForm, options: newOptions });
+                                }}
+                                placeholder={`選項 ${index + 1}`}
+                              />
+                              <Button type="button" variant="outline" size="sm" onClick={() => {
+                                const newOptions = configForm.options.filter((_, i) => i !== index);
+                                setConfigForm({ ...configForm, options: newOptions.length ? newOptions : [''] });
+                              }}>
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                              {index === configForm.options.length - 1 && (
+                                <Button type="button" variant="outline" size="sm" onClick={() => setConfigForm({ ...configForm, options: [...configForm.options, ''] })}>
+                                  <Plus className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {configForm.type !== 'select' && (
+                    <div>
+                      <div className="flex items-center gap-2 mt-2">
+                        <Checkbox
+                          id="config-use-dict"
+                          checked={!!configForm.dictRef}
+                          onCheckedChange={(checked) => {
+                            const next = !!checked ? { tableId: configForm.dictRef?.tableId || '', columnId: configForm.dictRef?.columnId || '' } : undefined;
+                            setConfigForm({ ...configForm, dictRef: next });
+                          }}
+                        />
+                        <Label htmlFor="config-use-dict" className="cursor-pointer">使用字典子表</Label>
+                      </div>
+                      {configForm.dictRef ? (
+                        <div className="mt-2 space-y-2">
+                          <div>
+                            <Label htmlFor="config-dict-table">字典表</Label>
+                            <Select
+                              value={configForm.dictRef.tableId}
+                              onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: value, columnId: '' } })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇字典表'} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {allTables.map((t) => (
+                                  <SelectItem key={t.id} value={t.id}>{t.name || t.id}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label htmlFor="config-dict-column">字典列</Label>
+                            {(() => {
+                              const dictTable = allTables.find(t => t.id === configForm.dictRef?.tableId);
+                              const dictCols: Column[] = dictTable?.columns || [];
+                              return (
+                                <Select
+                                  value={configForm.dictRef.columnId}
+                                  onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: configForm.dictRef?.tableId || '', columnId: value } })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder={dictCols.length === 0 ? '請先選擇字典表' : '選擇字典列'} />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {dictCols
+                                      .filter((c) => c.type === configForm.type && !(dictTable?.id === table.id && c.id === configColumnId))
+                                      .map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
+                                      ))}
+                                  </SelectContent>
+                                </Select>
+                              );
+                            })()}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   )}
                   <div className="flex gap-2 pt-2">

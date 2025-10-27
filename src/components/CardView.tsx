@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Plus, Edit, Trash2, File, Link, Mail, Phone, Search, Filter, X, CheckSquare, Square, Download, Copy } from 'lucide-react';
 import { Table, Row } from '@/types';
 import { toast } from 'sonner';
+import { isAuthenticated } from '@/lib/auth';
 
 // 為選項生成一致的顏色
 const getOptionColor = (option: any, index: number = 0) => {
@@ -63,7 +64,7 @@ interface CardViewProps {
 }
 
 export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLastOperation }: CardViewProps) {
-  const isAuthenticated = () => !!(localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name'));
+  // const isAuthenticated = () => !!(localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name'));
   // 直接使用原始的onUpdateTable函数，不再使用localStorage
   const onUpdateTable = (updatedTable: Table) => {
     // 调用原始的onUpdateTable函数
@@ -118,6 +119,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
   const [editValues, setEditValues] = useState<Record<string, any>>({});
   const [isAddRowOpen, setIsAddRowOpen] = useState(false);
   const [newRowValues, setNewRowValues] = useState<Record<string, any>>({});
+  // 已移除：卡片視圖的點擊外側自動保存功能
   const [searchTerm, setSearchTerm] = useState('');
   const [filters, setFilters] = useState<{ [columnId: string]: string }>({});
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -502,9 +504,9 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
       if (!filterValue || filterValue === '__all__') return true;
       
       // 檢查是否為範圍篩選（數字或日期）
-      if (filterKey.endsWith('_min') || filterKey.endsWith('_max') || 
+      if (filterKey.endsWith('_min') || filterKey.endsWith('_start') || 
           filterKey.endsWith('_start') || filterKey.endsWith('_end')) {
-        const columnId = filterKey.replace(/_min|_max|_start|_end$/, '');
+        const columnId = filterKey.replace(/_min|_start|_end$/, '');
         const column = table.columns.find(col => col.id === columnId);
         const cellValue = row[columnId];
         
@@ -564,176 +566,210 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
     onChange({ name: file.name, url, size: file.size, type: file.type });
   };
 
-  const renderFieldInput = (column: any, value: any, onChange: (value: any) => void, isEditing = false) => {
+  const getSelectOptions = (column: any): string[] => {
+    const opts = Array.isArray(column.options) ? column.options : [];
+    return opts;
+  };
+
+  const renderFieldInput = (
+    column: any,
+    value: any,
+    onChange: (value: any) => void,
+    isEditing = false,
+    onSave?: () => void
+  ) => {
     const inputId = `${column.id}-${isEditing ? 'edit' : 'new'}`;
-    
+
+    const handleSaveIfEditing = () => {
+      if (isEditing) {
+        onSave?.();
+      }
+    };
+
     switch (column.type) {
       case 'boolean':
         return (
           <Checkbox
             id={inputId}
             checked={Boolean(value)}
-            onCheckedChange={onChange}
+            onCheckedChange={(v) => {
+              onChange(Boolean(v));
+              handleSaveIfEditing();
+            }}
             className="h-4 w-4"
           />
         );
-      case 'select':
-        // 检查是否为多选模式
+
+      case 'number':
+        return (
+          <Input
+            id={inputId}
+            type="number"
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+            onBlur={handleSaveIfEditing}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSaveIfEditing();
+            }}
+            className="h-8"
+          />
+        );
+
+      case 'date':
+        return (
+          <Input
+            id={inputId}
+            type="datetime-local"
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value)}
+            onBlur={handleSaveIfEditing}
+            className="h-8"
+          />
+        );
+
+      case 'url':
+        return (
+          <Input
+            id={inputId}
+            type="url"
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value)}
+            onBlur={handleSaveIfEditing}
+            placeholder="https://example.com"
+            className="h-8"
+          />
+        );
+
+      case 'email':
+        return (
+          <Input
+            id={inputId}
+            type="email"
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value)}
+            onBlur={handleSaveIfEditing}
+            placeholder="name@example.com"
+            className="h-8"
+          />
+        );
+
+      case 'phone':
+        return (
+          <Input
+            id={inputId}
+            type="tel"
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value)}
+            onBlur={handleSaveIfEditing}
+            placeholder="0912-345-678"
+            className="h-8"
+          />
+        );
+
+      case 'file':
+        return (
+          <div className="flex items-center gap-2">
+            <Input
+              id={inputId}
+              type="file"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleFileUpload(f, onChange);
+              }}
+              className="h-8"
+            />
+            {value?.url && (
+              <a
+                href={value.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 underline truncate max-w-[150px]"
+                title={normalizeFileNameDisplay(value.name)}
+              >
+                {normalizeFileNameDisplay(value.name)}
+              </a>
+            )}
+          </div>
+        );
+
+      case 'select': {
+        const options = getSelectOptions(column);
         if (column.isMultiSelect) {
-          // 多选模式
-          const selectedValues = value ? (Array.isArray(value) ? value : [value]) : [];
-          
+          const selectedValues: string[] = value ? (Array.isArray(value) ? value : [value]) : [];
           return (
             <div className="w-full">
               <div className="flex flex-col gap-2">
-                {column.options?.map((option: string, index: number) => (
-                  <div 
-                    key={option} 
-                    className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors ${selectedValues.includes(option) ? 'bg-primary/10 border-primary/20' : 'hover:bg-muted'}`}
-                    onClick={() => {
-                      let newSelectedValues: string[];
-                      if (selectedValues.includes(option)) {
-                        // 取消选择
-                        newSelectedValues = selectedValues.filter(val => val !== option);
-                      } else {
-                        // 添加选择
-                        newSelectedValues = [...selectedValues, option];
-                      }
-                      onChange(newSelectedValues);
-                    }}
-                  >
-                    <Checkbox 
-                      checked={selectedValues.includes(option)}
-                      className="transition-all"
-                    />
-                    <div className="flex items-center gap-2">
-                      <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
-                      {option}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        } else {
-          // 单选模式
-          return (
-            <div className="w-full">
-              <Select value={String(value || '')} onValueChange={onChange}>
-                <SelectTrigger className="h-8 w-full">
-                  <SelectValue placeholder="請選擇選項" />
-                </SelectTrigger>
-                <SelectContent>
-                  {column.options?.map((option: string, index: number) => (
-                    <SelectItem key={option} value={option}>
+                {options.map((option: string, index: number) => {
+                  const checked = selectedValues.includes(option);
+                  return (
+                    <div
+                      key={option}
+                      className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors ${checked ? 'bg-primary/10 border-primary/20' : 'hover:bg-muted'}`}
+                      onClick={() => {
+                        let next: string[];
+                        if (checked) next = selectedValues.filter((v) => v !== option);
+                        else next = [...selectedValues, option];
+                        onChange(next);
+                      }}
+                    >
+                      <Checkbox checked={checked} className="transition-all" />
                       <div className="flex items-center gap-2">
                         <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
                         {option}
                       </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    </div>
+                  );
+                })}
+              </div>
+              {isEditing && (
+                <div className="mt-2">
+                  <Button size="sm" variant="outline" onClick={handleSaveIfEditing}>確認</Button>
+                </div>
+              )}
             </div>
           );
         }
-      case 'file':
-        if (!value) return <span className="text-sm text-muted-foreground">無檔案</span>;
+        // 單選
         return (
-          <div className="flex items-center gap-2 text-sm">
-            <File className="w-4 h-4 text-blue-500" />
-            <a 
-              href={value.url} 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:text-blue-800 underline truncate max-w-[150px]"
-              title={value.name}
+          <div className="w-full">
+            <Select
+              value={String(value ?? '')}
+              onValueChange={(v) => {
+                onChange(v);
+                handleSaveIfEditing();
+              }}
             >
-              {value.name}
-            </a>
+              <SelectTrigger className="h-8 w-full">
+                <SelectValue placeholder="請選擇選項" />
+              </SelectTrigger>
+              <SelectContent>
+                {options.map((option: string, index: number) => (
+                  <SelectItem key={option} value={option}>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
+                      {option}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         );
-      case 'url':
-        if (!value) return <span className="text-sm text-muted-foreground">無連結</span>;
-        return (
-          <div className="flex items-center gap-2 text-sm">
-            <Link className="w-4 h-4 text-blue-500" />
-            <a 
-              href={value.startsWith('http') ? value : `https://${value}`}
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-blue-600 hover:text-blue-800 underline truncate max-w-[150px]"
-            >
-              {value}
-            </a>
-          </div>
-        );
-      case 'email':
-        if (!value) return <span className="text-sm text-muted-foreground">無電子郵件</span>;
-        return (
-          <div className="flex items-center gap-2 text-sm">
-            <Mail className="w-4 h-4 text-green-500" />
-            <a 
-              href={`mailto:${value}`}
-              className="text-green-600 hover:text-green-800 underline"
-            >
-              {value}
-            </a>
-          </div>
-        );
-      case 'phone':
-        if (!value) return <span className="text-sm text-muted-foreground">無電話號碼</span>;
-        return (
-          <div className="flex items-center gap-2 text-sm">
-            <Phone className="w-4 h-4 text-purple-500" />
-            <a 
-              href={`tel:${value}`}
-              className="text-purple-600 hover:text-purple-800 underline"
-            >
-              {value}
-            </a>
-          </div>
-        );
-      case 'date':
-        if (!value) return <span className="text-sm text-muted-foreground">無日期時間</span>;
-        // 处理日期类型，将T替换为空格
-        return <span className="text-sm">{String(value).replace('T', ' ')}</span>;
-      case 'select':
-        if (!value) return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
-        
-        // 处理多选模式
-        if (column.isMultiSelect && Array.isArray(value)) {
-          if (value.length === 0) return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
-          
-          return (
-            <div className="flex flex-wrap gap-1 mt-1">
-              {value.map((selectedValue, i) => {
-                const optionIndex = column.options?.indexOf(selectedValue) || 0;
-                const colorClass = getOptionColor(selectedValue, optionIndex);
-                return (
-                  <span 
-                    key={`${selectedValue}-${i}`} 
-                    className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}
-                  >
-                    {selectedValue}
-                  </span>
-                );
-              })}
-            </div>
-          );
-        } else {
-          // 单选模式
-          const optionIndex = column.options?.indexOf(value) || 0;
-          const colorClass = getOptionColor(value, optionIndex);
-          
-          return (
-            <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
-              {value}
-            </span>
-          );
-        }
+      }
+
       default:
-        return <span className="text-sm">{normalizeTextDisplay(value || '')}</span>;
+        return (
+          <Input
+            id={inputId}
+            value={value ?? ''}
+            onChange={(e) => onChange(e.target.value)}
+            onBlur={handleSaveIfEditing}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSaveIfEditing();
+            }}
+            className="h-8"
+          />
+        );
     }
   };
 
@@ -1467,7 +1503,8 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
                             column,
                             editValues[column.id],
                             (value) => setEditValues({ ...editValues, [column.id]: value }),
-                            true
+                            true,
+                            () => saveEdit()
                           )
                         ) : (
                           <div className="overflow-hidden">
@@ -1499,3 +1536,8 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
     </div>
   );
 }
+
+// ...
+// ...
+// (移除文件末尾誤插入的 editContainerRef 和 useEffect 區塊)
+// ...

@@ -305,6 +305,7 @@ function App() {
   const [historyDetailEntry, setHistoryDetailEntry] = useState<HistoryEntry | null>(null);
   const [historyDetailCurrent, setHistoryDetailCurrent] = useState<any | null>(null);
   const [historyDetailPrevious, setHistoryDetailPrevious] = useState<any | null>(null);
+
   const [historyDetailLoading, setHistoryDetailLoading] = useState(false);
 
   const openHistoryDetail = async (entry: HistoryEntry) => {
@@ -315,14 +316,18 @@ function App() {
     try {
       const current = await apiService.getHistoryEntry(activeTable.id, entry.id);
       setHistoryDetailCurrent(current);
-      const idx = historyList.findIndex(e => e.id === entry.id);
-      const prevEntry = idx >= 0 ? historyList[idx + 1] : undefined; // 列表最新在上，上一版本為下一項
+
+      // 取得上一版本快照，用於顯示「本次操作」的變更（prev → current）
+      const sorted = [...historyList].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const idx = sorted.findIndex(e => e.id === entry.id);
+      const prevEntry = (idx >= 0 && idx < sorted.length - 1) ? sorted[idx + 1] : null;
       if (prevEntry) {
         const prev = await apiService.getHistoryEntry(activeTable.id, prevEntry.id);
         setHistoryDetailPrevious(prev);
       } else {
         setHistoryDetailPrevious(null);
       }
+
     } catch (e) {
       console.error('載入歷史詳情失敗:', e);
     } finally {
@@ -393,6 +398,111 @@ function App() {
       }
     });
     return result;
+  };
+
+  // 新版本對比：將歷史版本與當前版本全面對比
+  const computeVersionDiff = (oldSnap?: any, newSnap?: any) => {
+    const diff = { added: [] as any[], deleted: [] as any[], modified: [] as any[], moved: [] as any[] };
+    if (!oldSnap || !newSnap) return diff;
+    const oldRows: any[] = oldSnap.rows || [];
+    const newRows: any[] = newSnap.rows || [];
+    const oldColumns: any[] = oldSnap.columns || [];
+    const newColumns: any[] = newSnap.columns || [];
+
+    const oldIndexById: Record<string, number> = {};
+    oldRows.forEach((r, i) => { if (r?.id) oldIndexById[r.id] = i; });
+    const newIndexById: Record<string, number> = {};
+    newRows.forEach((r, i) => { if (r?.id) newIndexById[r.id] = i; });
+
+    const oldById: Record<string, any> = {};
+    oldRows.forEach(r => { if (r?.id) oldById[r.id] = r; });
+    const newById: Record<string, any> = {};
+    newRows.forEach(r => { if (r?.id) newById[r.id] = r; });
+
+    const stableStringify = (val: any): string => {
+      try {
+        if (val === null) return 'null';
+        if (Array.isArray(val)) return `[${val.map(stableStringify).join(',')}]`;
+        if (typeof val === 'object') {
+          const keys = Object.keys(val).sort();
+          return `{${keys.map(k => JSON.stringify(k)+':'+stableStringify(val[k])).join(',')}}`;
+        }
+        return JSON.stringify(val);
+      } catch {
+        return String(val);
+      }
+    };
+    const normalize = (v: any) => { if (v && typeof v === 'object') return stableStringify(v); return v; };
+
+    const colIdsSet = new Set<string>();
+    oldColumns.forEach((c: any) => c?.id && colIdsSet.add(c.id));
+    newColumns.forEach((c: any) => c?.id && colIdsSet.add(c.id));
+    const colIds = Array.from(colIdsSet);
+
+    // 新增與修改
+    newRows.forEach((nr, idxNew) => {
+      const id = nr?.id; if (!id) return;
+      const or = oldById[id];
+      if (!or) {
+        diff.added.push({ rowId: id, indexNew: idxNew, row: nr });
+      } else {
+        const changes: Array<{ columnId: string; before: any; after: any }> = [];
+        colIds.forEach(cid => {
+          const before = or[cid];
+          const after = nr[cid];
+          if (normalize(before) !== normalize(after)) {
+            changes.push({ columnId: cid, before, after });
+          }
+        });
+        if (changes.length > 0) {
+          diff.modified.push({ rowId: id, indexOld: oldIndexById[id], indexNew: newIndexById[id], changes });
+        }
+      }
+    });
+
+    // 刪除
+    oldRows.forEach((or, idxOld) => {
+      const id = or?.id; if (!id) return;
+      if (!newById[id]) {
+        diff.deleted.push({ rowId: id, indexOld: idxOld, row: or });
+      }
+    });
+
+    // 移動（拖動）：排除純插入/刪除造成的整體位移，並抑制批量重排序噪音
+    const addedList = Object.keys(newIndexById)
+      .filter(id => oldIndexById[id] === undefined)
+      .map(id => ({ id, idx: newIndexById[id] }));
+    const deletedList = Object.keys(oldIndexById)
+      .filter(id => newIndexById[id] === undefined)
+      .map(id => ({ id, idx: oldIndexById[id] }));
+
+    const candidateMoves: Array<{ rowId: string; from: number; to: number; effectiveShift: number }> = [];
+    Object.keys(oldIndexById).forEach(id => {
+      const newIdx = newIndexById[id];
+      if (newIdx === undefined) return; // 已刪除的不計入移動
+      const oldIdx = oldIndexById[id];
+      const addedBefore = addedList.filter(a => a.idx < newIdx).length;
+      const deletedBefore = deletedList.filter(d => d.idx < oldIdx).length;
+      const effectiveShift = newIdx - oldIdx - addedBefore + deletedBefore;
+      if (effectiveShift !== 0) {
+        candidateMoves.push({ rowId: id, from: oldIdx, to: newIdx, effectiveShift });
+      }
+    });
+
+    // 抑制批量重排序噪音：若絕大多數行具有相同有效位移，視為視圖層排序影響而非拖動
+    if (candidateMoves.length > 0) {
+      const freq: Record<number, number> = {};
+      candidateMoves.forEach(m => { freq[m.effectiveShift] = (freq[m.effectiveShift] || 0) + 1; });
+      const entries = Object.entries(freq).sort((a, b) => b[1] - a[1]);
+      const [dominantShiftStr, dominantCount] = entries[0] || [undefined, 0];
+      const dominantShift = dominantShiftStr !== undefined ? Number(dominantShiftStr) : 0;
+      const dominantRatio = dominantCount / Math.max(1, candidateMoves.length);
+      const bulkShiftLikely = Math.abs(dominantShift) <= (addedList.length + deletedList.length) && dominantRatio >= 0.8;
+      const moves = bulkShiftLikely ? [] : candidateMoves;
+      moves.forEach(m => diff.moved.push({ rowId: m.rowId, from: m.from, to: m.to }));
+    }
+
+    return diff;
   };
 
   // 相對時間格式（中文）：將毫秒時間戳轉為「x 分鐘前 / x 秒前 / x 小時前」
@@ -1202,51 +1312,18 @@ function App() {
                           <DialogTitle>歷史詳情</DialogTitle>
                         </DialogHeader>
                         {(() => {
-                          const currSnapForDiff = (() => {
-                            const isLatest = historyList && historyList[0]?.id === historyDetailCurrent?.id;
-                            if (isLatest && activeTable) {
-                              return { columns: activeTable.columns || [], rows: activeTable.rows || [] };
-                            }
-                            return historyDetailCurrent?.snapshot;
-                          })();
-                          const diffs = computeSnapshotDiff(historyDetailPrevious?.snapshot, currSnapForDiff) || [];
-                          const colIds = diffs.length ? Array.from(new Set(diffs.flatMap(d => d.changes.map(ch => ch.columnId)))) : [];
-                          const colLabel = colIds.map(cid => activeTable?.columns.find(c => c.id === cid)?.name || cid).join('、');
-                          const rowNums = diffs.length && activeTable?.rows ? Array.from(new Set(
-                            diffs.map(d => {
-                              const idx = activeTable.rows.findIndex(r => r.id === d.rowId);
-                              return idx >= 0 ? (idx + 1) : null;
-                            }).filter((v): v is number => v !== null)
-                          )).join('、') : '';
-                          const formatExact = (input?: string | number | Date) => {
-                            const d = parseToDate(input);
-                            if (!d) return '';
-                            const y = d.getFullYear();
-                            const m = String(d.getMonth() + 1).padStart(2, '0');
-                            const da = String(d.getDate()).padStart(2, '0');
-                            const hh = String(d.getHours()).padStart(2, '0');
-                            const mm = String(d.getMinutes()).padStart(2, '0');
-                            const ss = String(d.getSeconds()).padStart(2, '0');
-                            return `${y}/${m}/${da} ${hh}:${mm}:${ss}`;
-                          };
-                          const extractAction = (l?: string) => {
-                            if (!l) return '修改';
-                            const first = String(l).split('|')[0].trim();
-                            return first || '修改';
-                          };
+                          const prevSnap = historyDetailPrevious?.snapshot;
+                          const currSnap = historyDetailCurrent?.snapshot;
                           const actor = historyDetailEntry?.actor || '未知用戶';
-                          const source = historyDetailEntry?.source || '未知來源';
-                          const time = historyDetailEntry ? formatExact(historyDetailEntry.created_at) : '';
-                          const action = extractAction(historyDetailEntry?.label || historyDetailEntry?.id);
+                          const time = historyDetailEntry ? formatLocalTime(historyDetailEntry.created_at) : '';
+                          const action = (historyDetailEntry?.label || historyDetailEntry?.id || '').split('|')[0] || '修改';
+                          const title = (prevSnap && currSnap) ? '操作對比：上一版本 vs 此版本' : '版本對比：歷史版本 vs 當前版本';
                           return (
                             <div className="space-y-2">
+                              <div className="text-sm">{title}</div>
                               <div className="text-sm">操作：{action}</div>
-                              <div className="text-sm">修改位置：{source}</div>
-                              {rowNums ? <div className="text-sm">行：{rowNums}</div> : null}
-                              {colLabel ? <div className="text-sm">欄位：{colLabel}</div> : null}
-                              <div className="text-sm text-muted-foreground">----------------------------</div>
                               <div className="text-sm">用戶：{actor}</div>
-                              <div className="text-sm">PST 時間：{time}</div>
+                              <div className="text-sm">時間：{time}</div>
                             </div>
                           );
                         })()}
@@ -1256,162 +1333,97 @@ function App() {
                           <div className="mt-4">
                             <div className="text-sm font-medium mb-2">數據變更：</div>
                             {(() => {
-                              const currSnapForDiff = (() => {
-                                const isLatest = historyList && historyList[0]?.id === historyDetailCurrent?.id;
-                                if (isLatest && activeTable) {
-                                  return { columns: activeTable.columns || [], rows: activeTable.rows || [] };
-                                }
-                                return historyDetailCurrent?.snapshot;
-                              })();
-                              const diffs = computeSnapshotDiff(historyDetailPrevious?.snapshot, currSnapForDiff);
-                              const getRowNum = (id: string) => {
-                                if (activeTable?.rows) {
-                                  const idx = activeTable.rows.findIndex(r => r.id === id);
-                                  if (idx >= 0) return idx + 1;
-                                }
-                                const prevRows = historyDetailPrevious?.snapshot?.rows || [];
-                                const idxPrev = prevRows.findIndex((r: any) => r.id === id);
-                                return idxPrev >= 0 ? (idxPrev + 1) : '';
+                              const prevSnap = historyDetailPrevious?.snapshot;
+                              const currSnap = historyDetailCurrent?.snapshot;
+                              const latestSnap = activeTable ? { columns: activeTable.columns || [], rows: activeTable.rows || [] } : null;
+                              // 優先對比「上一版本 → 此版本」，若無上一版本則退回「此版本 → 當前版本」
+                              const baseSnap = (prevSnap && currSnap) ? prevSnap : currSnap;
+                              const nextSnap = (prevSnap && currSnap) ? currSnap : latestSnap;
+                              const diff = computeVersionDiff(baseSnap, nextSnap);
+                              const colName = (cid: string) => (nextSnap?.columns || activeTable?.columns || []).find((c: any) => c.id === cid)?.name || cid;
+                              const rowIndexNew = (id: string) => {
+                                const rows = nextSnap?.rows || [];
+                                const idx = rows.findIndex((r: any) => r.id === id);
+                                return idx >= 0 ? idx + 1 : '';
                               };
-                              const isEmptyValue = (v: any) => {
-                                if (v === null || v === undefined) return true;
-                                if (typeof v === 'string' && v.trim() === '') return true;
-                                if (Array.isArray(v)) return v.length === 0;
-                                if (typeof v === 'object') {
-                                  try {
-                                    const keys = Object.keys(v);
-                                    if (keys.length === 0) return true;
-                                    const meaningful = keys.filter(k => {
-                                      const val = (v as any)[k];
-                                      return val !== null && val !== undefined && String(val).trim() !== '';
-                                    });
-                                    if (meaningful.length === 0) return true;
-                                    if (meaningful.length === 1 && meaningful[0] === 'name') return true;
-                                  } catch {}
-                                }
-                                return false;
+                              const rowIndexOld = (id: string) => {
+                                const rows = baseSnap?.rows || [];
+                                const idx = rows.findIndex((r: any) => r.id === id);
+                                return idx >= 0 ? idx + 1 : '';
                               };
-                              const renderHighlights = (obj: any) => {
-                                if (!obj || typeof obj !== 'object') return null;
-                                const name = (obj as any).name;
-                                const url = (obj as any).url;
-                                const size = (obj as any).size;
-                                const items = [
-                                  name !== undefined && String(name).trim() !== '' ? (
-                                    <span key="name" className="px-1 rounded bg-yellow-100 text-yellow-800">name: {String(name)}</span>
-                                  ) : null,
-                                  url ? (
-                                    <span key="url" className="px-1 rounded bg-blue-100 text-blue-800">url</span>
-                                  ) : null,
-                                  size !== undefined ? (
-                                    <span key="size" className="px-1 rounded bg-green-100 text-green-800">size: {String(size)}</span>
-                                  ) : null,
-                                ].filter(Boolean);
-                                if (items.length === 0) return null;
-                                return <span className="flex flex-wrap gap-1 items-center">{items}</span>;
-                              };
-                              const formatBytes = (n?: number) => {
-                                if (typeof n !== 'number' || isNaN(n)) return '';
-                                const units = ['B','KB','MB','GB','TB'];
-                                let i = 0;
-                                let v = n;
-                                while (v >= 1024 && i < units.length - 1) {
-                                  v /= 1024;
-                                  i++;
-                                }
-                                return `${v % 1 === 0 ? v : v.toFixed(1)}${units[i]}`;
-                              };
-                              const summarizeObject = (obj: any) => {
-                                if (!obj || typeof obj !== 'object') return '';
-                                const name = obj?.name;
-                                const size = obj?.size;
-                                const url = obj?.url;
-                                const parts: string[] = [];
-                                if (name !== undefined && String(name).trim() !== '') parts.push(`name: ${String(name)}`);
-                                if (size !== undefined) parts.push(`size: ${formatBytes(Number(size)) || String(size)}`);
-                                if (url) parts.push('url');
-                                return parts.join(' · ');
-                              };
-                              const summarizeDiff = (before: any, after: any) => {
-                                if (!before || !after || typeof before !== 'object' || typeof after !== 'object') return '';
-                                const diffs: string[] = [];
-                                if (before.name !== after.name) diffs.push(`name「${String(before.name ?? '')}」→「${String(after.name ?? '')}」`);
-                                if (before.size !== after.size) diffs.push(`size ${formatBytes(Number(before.size)) || String(before.size ?? '')} → ${formatBytes(Number(after.size)) || String(after.size ?? '')}`);
-                                if (!!before.url !== !!after.url) diffs.push(before.url ? '移除 url' : '新增 url');
-                                if (diffs.length === 0) return '內容更新';
-                                return diffs.join('，');
-                              };
-                              const describeChange = (before: any, after: any) => {
-                                const beforeEmpty = isEmptyValue(before);
-                                const afterEmpty = isEmptyValue(after);
-                                if (beforeEmpty && !afterEmpty) {
-                                  if (typeof after === 'object') {
-                                    const s = summarizeObject(after);
-                                    return s ? `新增：${s}` : '新增內容';
-                                  }
-                                  return `新增：「${String(after)}」`;
-                                } else if (!beforeEmpty && afterEmpty) {
-                                  if (typeof before === 'object') {
-                                    const s = summarizeObject(before);
-                                    return s ? `刪除：${s}` : '刪除內容';
-                                  }
-                                  return `刪除：「${String(before)}」`;
-                                } else if (!beforeEmpty && !afterEmpty) {
-                                  if (typeof before === 'object' && typeof after === 'object') {
-                                    return summarizeDiff(before, after);
-                                  }
-                                  return `由「${String(before)}」→「${String(after)}」`;
-                                }
-                                return '無變更';
-                              };
-                              if (!diffs || diffs.length === 0) {
-                                return <div className="text-sm text-muted-foreground">未檢測到可視化差異（或為初始快照）。</div>;
-                              }
-                              return (
-                                <div className="space-y-3 max-h-[60vh] overflow-auto pr-2">
-                                  {diffs.map(d => (
-                                    <div key={d.rowId} className="border rounded p-2">
-                                      <div className="text-xs text-muted-foreground mb-1 flex items-center gap-2">
-                                        <span>行：{getRowNum(d.rowId) || d.rowId}</span>
-                                        {(() => {
-                                          const allAdded = d.changes.every((ch: any) => ch.before === undefined && ch.after !== undefined);
-                                          const allDeleted = d.changes.every((ch: any) => ch.before !== undefined && ch.after === undefined);
-                                          const type = allAdded ? 'added' : (allDeleted ? 'deleted' : 'modified');
-                                          const label = type === 'added' ? '新增行' : type === 'deleted' ? '删除行' : '修改行';
-                                          const cls = type === 'added' ? 'bg-green-100 text-green-700' : type === 'deleted' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700';
-                                          return <span className={`px-1 rounded ${cls}`}>{label}</span>;
-                                        })()}
-                                      </div>
-                                      {d.changes.map(ch => (
-                                        <details key={ch.columnId} className="text-sm break-all">
-                                          <summary className="cursor-pointer flex flex-wrap items-start gap-2">
-                                              <span className="font-medium">{activeTable?.columns.find(c => c.id === ch.columnId)?.name || ch.columnId}</span>
-                                              {(() => {
-                                                const t = ch.before === undefined && ch.after !== undefined ? '新增' : (ch.before !== undefined && ch.after === undefined ? '删除' : '修改');
-                                                const cls = t === '新增' ? 'bg-green-100 text-green-700' : t === '删除' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700';
-                                                return <span className={`px-1 rounded ${cls}`}>{t}</span>;
-                                              })()}
-                                              <span className="text-muted-foreground">{describeChange(ch.before, ch.after)}</span>
-                                              {typeof ch.after === 'object' ? renderHighlights(ch.after) : null}
-                                            </summary>
-                                          <div className="mt-2">
-                                            {!isEmptyValue(ch.before) && (
-                                              typeof ch.before === 'object' ? (
-                                                <pre className="whitespace-pre-wrap break-all text-muted-foreground line-through">{JSON.stringify(ch.before, null, 2)}</pre>
-                                              ) : (
-                                                <span className="line-through break-all">{String(ch.before)}</span>
-                                              )
-                                            )}
-                                            {typeof ch.after === 'object' ? (
-                                              <pre className="whitespace-pre-wrap break-all">{JSON.stringify(ch.after, null, 2)}</pre>
-                                            ) : (
-                                              <span className="break-all">{String(ch.after ?? '')}</span>
-                                            )}
-                                          </div>
-                                        </details>
-                                      ))}
+                              const renderChanges = (changes: Array<{columnId: string; before: any; after: any}>) => (
+                                <div className="mt-1 space-y-1">
+                                  {changes.map(ch => (
+                                    <div key={ch.columnId} className="text-sm">
+                                      <span className="font-medium">{colName(ch.columnId)}</span>
+                                      <span className="ml-2 px-1 rounded bg-blue-100 text-blue-700">修改</span>
+                                      <span className="ml-2 text-muted-foreground">{String(ch.before ?? '')} → {String(ch.after ?? '')}</span>
                                     </div>
                                   ))}
+                                </div>
+                              );
+                              const hasDiff = diff.added.length || diff.deleted.length || diff.modified.length || diff.moved.length;
+                              if (!hasDiff) {
+                                return <div className="text-sm text-muted-foreground">未檢測到此操作引起的差異。</div>;
+                              }
+                              return (
+                                <div className="space-y-4 max-h-[60vh] overflow-auto pr-2">
+                                  {diff.added.length > 0 && (
+                                    <div>
+                                      <div className="text-sm font-medium mb-1">新增（{diff.added.length}）</div>
+                                      <div className="space-y-2">
+                                        {diff.added.map(a => (
+                                          <div key={a.rowId} className="border rounded p-2">
+                                            <div className="text-xs text-green-700">行：{rowIndexNew(a.rowId) || a.rowId}</div>
+                                            {renderChanges(Object.keys(a.row || {}).map(cid => ({ columnId: cid, before: undefined, after: a.row[cid] })))}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {diff.modified.length > 0 && (
+                                    <div>
+                                      <div className="text-sm font-medium mb-1">修改（{diff.modified.length}）</div>
+                                      <div className="space-y-2">
+                                        {diff.modified.map(m => (
+                                          <div key={m.rowId} className="border rounded p-2">
+                                            <div className="text-xs text-blue-700">行：{rowIndexNew(m.rowId) || rowIndexOld(m.rowId) || m.rowId}</div>
+                                            {renderChanges(m.changes)}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {diff.deleted.length > 0 && (
+                                    <div>
+                                      <div className="text-sm font-medium mb-1">刪除（{diff.deleted.length}）</div>
+                                      <div className="space-y-2">
+                                        {diff.deleted.map(d => (
+                                          <div key={d.rowId} className="border rounded p-2">
+                                            <div className="text-xs text-red-700">行：{rowIndexOld(d.rowId) || d.rowId}</div>
+                                            <div className="mt-1 text-sm text-muted-foreground">此行已刪除</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  {(() => {
+                                     const actionText = (historyDetailEntry?.label || historyDetailEntry?.id || '').split('|')[0] || '';
+                                     const suppressMoves = /新增|刪除|批量刪除/.test(actionText) || (diff.deleted.length > 0 && diff.moved.length > 0);
+                                     if (suppressMoves || diff.moved.length === 0) return null;
+                                     return (
+                                       <div>
+                                         <div className="text-sm font-medium mb-1">拖動（{diff.moved.length}）</div>
+                                         <div className="space-y-2">
+                                           {diff.moved.map(move => (
+                                             <div key={move.rowId} className="border rounded p-2">
+                                               <div className="text-xs text-purple-700">行：{rowIndexOld(move.rowId) || move.rowId} → {rowIndexNew(move.rowId) || move.rowId}</div>
+                                             </div>
+                                           ))}
+                                         </div>
+                                       </div>
+                                     );
+                                   })()}
                                 </div>
                               );
                             })()}
