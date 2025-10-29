@@ -8,7 +8,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Table as TableIcon, Grid3X3, Download, Menu, X, RotateCcw, History, Trash2, User } from 'lucide-react';
+import { Plus, Table as TableIcon, Grid3X3, Download, Menu, X, RotateCcw, History, Trash2, User, HelpCircle } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
 import { toast, Toaster } from 'sonner';
@@ -764,7 +764,7 @@ function App() {
       )}
       <div className="flex h-screen">
         {/* Sidebar */}
-        <div className="w-64 border-r border-border bg-card">
+        <div className="w-64 border-r border-border bg-card flex flex-col">
           <div className="p-4 border-b border-border">
             <h1 className="text-xl font-bold text-foreground">孵化之路信息管理系統</h1>
             <div className="mt-2 flex items-center gap-2">
@@ -826,18 +826,20 @@ function App() {
             />
           </div>
           
-          {/* 反馈建议入口 - 放置在页面的最底部 */}
-          <div className="mt-auto p-4 border-t border-border">
+          {/* 反馈建议入口與用戶狀態已移至側邊欄底部統一展示 */}
+          <div className="hidden mt-auto p-4 border-t border-border">
             {/* 當前操作用戶顯示（為後續 foundation 登錄打底） */}
             <ContextMenu>
               <ContextMenuTrigger asChild>
-                <div className="flex items-center justify-center text-sm text-muted-foreground mb-2 cursor-context-menu select-none">
-                  <User className={`w-4 h-4 mr-2 ${currentUserName ? 'text-green-600' : 'text-muted-foreground'}`} />
-                  <span className={currentUserName ? 'text-green-600 font-medium' : 'text-muted-foreground'}>
-                    {currentUserName || '未登入'}
-                  </span>
+                <div className="flex items-center justify-between text-sm mb-2 cursor-context-menu select-none rounded-md px-3 py-2 hover:bg-muted">
+                  <div className="flex items-center gap-2">
+                    <User className={`w-4 h-4 ${currentUserName ? 'text-green-600' : 'text-muted-foreground'}`} />
+                    <span className={currentUserName ? 'text-foreground font-medium' : 'text-muted-foreground'}>
+                      {currentUserName || '未登入'}
+                    </span>
+                  </div>
                   {!currentUserName && (
-                    <button className="ml-2 px-2 py-1 rounded bg-primary text-primary-foreground" onClick={() => setIsLoginDialogOpen(true)}>登入</button>
+                    <button className="px-2 py-1 rounded-md border border-border bg-card text-foreground hover:bg-muted" onClick={() => setIsLoginDialogOpen(true)}>登入</button>
                   )}
                 </div>
               </ContextMenuTrigger>
@@ -850,14 +852,7 @@ function App() {
                 )}
               </ContextMenuContent>
             </ContextMenu>
-            <a 
-              href="https://omeoffice.com/usageFeedback" 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="text-blue-600 hover:text-blue-800 text-sm font-medium underline decoration-dotted underline-offset-2 flex items-center justify-center"
-            >
-              反馈建议入口
-            </a>
+            {/* 反馈入口已移至侧边栏底部以优化布局與一致性 */}
             {/* 權限顯示映射與工具
               const PERMISSION_MAP: Record<string, { label: string; category: string; description: string; critical?: boolean }> = {
                 'tables.read': { label: '讀取表格', category: '表格', description: '查看子表與欄位結構' },
@@ -1136,6 +1131,42 @@ function App() {
               </DialogContent>
             </Dialog>)}
           </div>
+          <div className="mt-auto p-4 border-t border-border">
+             {/* 當前操作用戶顯示（搬至底部，與反饋入口並列） */}
+             <ContextMenu>
+               <ContextMenuTrigger asChild>
+                 <div className="flex items-center justify-between text-sm mb-2 cursor-context-menu select-none rounded-md px-3 py-2 hover:bg-muted">
+                   <div className="flex items-center gap-2">
+                     <User className={`w-4 h-4 ${currentUserName ? 'text-green-600' : 'text-muted-foreground'}`} />
+                     <span className={currentUserName ? 'text-foreground font-medium' : 'text-muted-foreground'}>
+                       {currentUserName || '未登入'}
+                     </span>
+                   </div>
+                   {!currentUserName && (
+                     <button className="px-2 py-1 rounded-md border border-border bg-card text-foreground hover:bg-muted" onClick={() => setIsLoginDialogOpen(true)}>登入</button>
+                   )}
+                 </div>
+               </ContextMenuTrigger>
+               <ContextMenuContent className="min-w-[180px]">
+                 <ContextMenuItem onClick={handleLogout}>登出</ContextMenuItem>
+                 <ContextMenuSeparator />
+                 <ContextMenuItem onClick={() => setIsPermissionsDialogOpen(true)}>查看權限</ContextMenuItem>
+                 {canAccessPermissionSettings && (
+                   <ContextMenuItem onClick={() => setIsPermissionsSettingsOpen(true)}>權限設置</ContextMenuItem>
+                 )}
+               </ContextMenuContent>
+             </ContextMenu>
+
+             <a 
+               href="https://omeoffice.com/usageFeedback" 
+               target="_blank" 
+               rel="noopener noreferrer" 
+               className="flex items-center gap-2 text-sm text-muted-foreground hover:bg-muted hover:text-foreground rounded-md px-3 py-2"
+             >
+               <HelpCircle className="w-4 h-4 text-primary" />
+               使用反馈
+             </a>
+           </div>
         </div>
 
         {/* 移动端侧边栏遮罩 */}

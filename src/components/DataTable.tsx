@@ -2198,9 +2198,9 @@ export function DataTable({
             // 添加空值检查，修复类型错误
             value={editValue || ''}
             onChange={(e) => setEditValue(e.target.value)}
-            onBlur={saveEdit}
+            onBlur={(e) => saveEdit(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') saveEdit();
+              if (e.key === 'Enter') saveEdit(editValue);
               if (e.key === 'Escape') cancelEdit();
             }}
             className="h-8"
