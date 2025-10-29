@@ -8,7 +8,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Table as TableIcon, Grid3X3, Download, Menu, X, RotateCcw, History, Trash2, User, HelpCircle } from 'lucide-react';
+import { Plus, Table as TableIcon, Grid3X3, Download, Menu, X, RotateCcw, History, Trash2, User, HelpCircle, Database } from 'lucide-react';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
 import { toast, Toaster } from 'sonner';
@@ -232,6 +232,10 @@ function App() {
   const [historyList, setHistoryList] = useState<HistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyMenuMeta, setHistoryMenuMeta] = useState<Record<string, { time: string; user: string; action: string; view: string; columns: string[]; type: 'add' | 'edit' | 'delete' | 'other'; }>>({});
+// 新增：歷史分頁狀態
+const [historyNextCursor, setHistoryNextCursor] = useState<string | null>(null);
+const [historyHasMore, setHistoryHasMore] = useState<boolean>(false);
+const [historyPageSize, setHistoryPageSize] = useState<number>(20);
   const extractActionFromLabel = (l?: string) => {
     if (!l) return '修改';
     const first = String(l).split('|')[0].trim();
@@ -244,23 +248,38 @@ function App() {
     if (/[修改编輯编辑]/.test(action) || a.includes('edit') || a.includes('update')) return 'edit';
     return 'other';
   };
-  const loadHistory = async (tableId: string) => {
+  const loadHistory = async (tableId: string, append: boolean = false) => {
     setHistoryLoading(true);
     try {
-      const list = await apiService.getHistoryList(tableId);
-      const normalized = Array.isArray(list) ? list : [];
-      setHistoryList(normalized);
-      if (normalized.length === 0) {
-        await apiService.createHistorySnapshot(tableId, { label: '初始載入', source: '系統' });
-        const refreshed = await apiService.getHistoryList(tableId);
-        const normalized2 = Array.isArray(refreshed) ? refreshed : [];
-        setHistoryList(normalized2);
+      const resp = await apiService.getHistoryList(tableId, { limit: historyPageSize, cursor: append ? historyNextCursor || undefined : undefined });
+      const items = Array.isArray(resp) ? resp : (resp?.items || []);
+      const nextCursor = Array.isArray(resp) ? null : (resp?.nextCursor || null);
+
+      if (!append) {
+        if (items.length === 0) {
+          await apiService.createHistorySnapshot(tableId, { label: '初始載入', source: '系統' });
+          const resp2 = await apiService.getHistoryList(tableId, { limit: historyPageSize });
+          const items2 = Array.isArray(resp2) ? resp2 : (resp2?.items || []);
+          const nextCursor2 = Array.isArray(resp2) ? null : (resp2?.nextCursor || null);
+          setHistoryList(items2);
+          setHistoryNextCursor(nextCursor2);
+          setHistoryHasMore(items2.length >= historyPageSize && !!nextCursor2);
+        } else {
+          setHistoryList(items);
+          setHistoryNextCursor(nextCursor);
+          setHistoryHasMore(items.length >= historyPageSize && !!nextCursor);
+        }
+      } else {
+        setHistoryList(prev => [...prev, ...items]);
+        setHistoryNextCursor(nextCursor);
+        setHistoryHasMore(items.length >= historyPageSize && !!nextCursor);
       }
+
       // 構建下拉菜單的二行摘要（前 12 條），以「當前表」為對比基準
       setHistoryMenuMeta({});
       if (activeTable) {
         const currentState = { columns: activeTable.columns || [], rows: activeTable.rows || [] };
-        const sourceList = normalized.length ? normalized : [];
+        const sourceList = (append ? [...historyList, ...items] : items);
         const limit = Math.min(sourceList.length, 12);
         const top = sourceList.slice(0, limit);
         const metaPairs: Array<[string, { time: string; user: string; action: string; view: string; columns: string[]; type: 'add' | 'edit' | 'delete' | 'other'; }]> = [];
@@ -270,20 +289,33 @@ function App() {
             const prevSnap = detail?.snapshot;
             const diffs = computeSnapshotDiff(prevSnap, currentState);
             const actor = entry.actor || '未知用戶';
-            const source = entry.source || '未知來源';
+            const timeStr = formatLocalTime(entry.created_at);
             const action = extractActionFromLabel(entry.label || entry.id);
-            const type = classifyActionType(action);
-            const colIds = Array.from(new Set(diffs.flatMap(d => d.changes.map(ch => ch.columnId))));
-            const columns = colIds.map(cid => activeTable.columns.find(c => c.id === cid)?.name || cid);
-            const time = formatLocalTime(entry.created_at);
-            metaPairs.push([entry.id, { time, user: actor, action, view: source, columns, type }]);
+            const view = entry.source || '未知來源';
+            const columnNameById = new Map((currentState.columns || []).map((c: any) => [c.id, c.name || c.id]));
+            const changedColIds = new Set<string>();
+            let addCount = 0, deleteCount = 0, editCount = 0;
+            for (const d of diffs) {
+              for (const ch of d.changes) {
+                changedColIds.add(ch.columnId);
+                const beforeUndef = typeof ch.before === 'undefined';
+                const afterUndef = typeof ch.after === 'undefined';
+                if (beforeUndef && !afterUndef) addCount++;
+                else if (!beforeUndef && afterUndef) deleteCount++;
+                else editCount++;
+              }
+            }
+            const cols = Array.from(changedColIds).slice(0, 4).map(cid => String(columnNameById.get(cid)));
+            let type: 'add' | 'edit' | 'delete' | 'other' = 'other';
+            if (addCount > 0 && deleteCount === 0 && editCount === 0) type = 'add';
+            else if (deleteCount > 0 && addCount === 0 && editCount === 0) type = 'delete';
+            else if (editCount > 0 || (addCount > 0 && deleteCount > 0)) type = 'edit';
+            metaPairs.push([entry.id, { time: timeStr, user: actor, action, view, columns: cols, type }]);
           } catch (e) {
             console.warn('生成歷史菜單元數據失敗:', e);
           }
         }
-        if (metaPairs.length) {
-          setHistoryMenuMeta(prev => ({ ...prev, ...Object.fromEntries(metaPairs) }));
-        }
+        setHistoryMenuMeta(prev => ({ ...prev, ...Object.fromEntries(metaPairs) }));
       }
     } catch (e) {
       console.error('載入歷史失敗:', e);
@@ -295,8 +327,10 @@ function App() {
     const t = tables?.find(t => t.id === activeTableId);
     setHistoryList([]);
     setLastOpInfo(null);
+    setHistoryNextCursor(null);
+    setHistoryHasMore(false);
     if (t?.id) {
-      loadHistory(t.id);
+      loadHistory(t.id, false);
     }
   }, [activeTableId]);
 
@@ -767,23 +801,20 @@ function App() {
         <div className="w-64 border-r border-border bg-card flex flex-col">
           <div className="p-4 border-b border-border">
             <h1 className="text-xl font-bold text-foreground">孵化之路信息管理系統</h1>
-            <div className="mt-2 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-green-500"></div>
-              <span className="text-xs text-muted-foreground">
-                本地存儲 (SQLite)
-              </span>
+            <div className="mt-2 flex items-center justify-between text-sm rounded-md px-3 py-2 hover:bg-muted">
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-green-600" />
+                <span className="text-muted-foreground">本地存儲 (SQLite)</span>
+              </div>
               {error && (
-                <span className="text-xs text-red-500">連接錯誤</span>
+                <span className="text-sm text-red-600">連接錯誤</span>
               )}
             </div>
             
             {/* 版本信息 - 显示在本地存储文字的下方 */}
-            <div className="mt-1 flex items-center gap-2">
-              {/* 顯示藍色小球 */}
-              <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-              <span className="text-xs text-muted-foreground">
-                版本信息: v1.1
-              </span>
+            <div className="mt-2 flex items-center text-sm rounded-md px-3 py-2 hover:bg-muted">
+              <History className="w-4 h-4 text-muted-foreground mr-2" />
+              <span className="text-muted-foreground">版本信息: v1.1</span>
             </div>
           </div>
           
@@ -1282,6 +1313,14 @@ function App() {
                             </DropdownMenuItem>
                           ))
                         ))}
+                        {historyHasMore && (
+                          <DropdownMenuItem onClick={() => {
+                            if (!activeTable) return;
+                            loadHistory(activeTable.id, true);
+                          }}>
+                            載入更多...
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           className="text-destructive focus:text-destructive"

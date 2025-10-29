@@ -7,13 +7,25 @@ const db = new DatabaseWrapper();
 // 取得指定表的歷史版本列表
 router.get('/:tableId/history', (req, res) => {
   const { tableId } = req.params;
-  db.getHistoryList(tableId, (err, list) => {
-    if (err) {
-      console.error('Error getting history list:', err);
-      return res.status(500).json({ error: 'Failed to get history list' });
-    }
-    res.json(list);
-  });
+  const { limit, cursor, actor, source, from, to } = req.query;
+  try {
+    db.getHistoryList(
+      tableId,
+      { limit, cursor, actor, source, from, to },
+      (err, list) => {
+        if (err) {
+          return res.status(500).json({ error: err.message });
+        }
+        let nextCursor = null;
+        if (Array.isArray(list) && list.length > 0) {
+          nextCursor = list[list.length - 1].created_at;
+        }
+        return res.json({ items: list, nextCursor });
+      }
+    );
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // 取得指定歷史版本詳細（包含快照）

@@ -71,6 +71,12 @@ class DatabaseWrapper {
           FOREIGN KEY (table_id) REFERENCES tables (id) ON DELETE CASCADE
         )
       `);
+      // 新增：索引提升歷史列表查詢性能
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_table_history_table_created ON table_history(table_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_table_history_table_actor_created ON table_history(table_id, actor, created_at);
+        CREATE INDEX IF NOT EXISTS idx_table_history_table_source_created ON table_history(table_id, source, created_at);
+      `);
 
       // 新增：用戶角色與權限設定表
       this.db.exec(`
@@ -377,13 +383,29 @@ class DatabaseWrapper {
   }
 
   // 新增：取得歷史版本列表
-  getHistoryList(tableId, callback) {
+  getHistoryList(tableId, optionsOrCallback, maybeCallback) {
     try {
-      const list = this.db
-        .prepare(
-          'SELECT id, table_id, label, source, actor, created_at FROM table_history WHERE table_id = ? ORDER BY created_at DESC'
-        )
-        .all(tableId);
+      const hasOptions = typeof optionsOrCallback === 'object' && optionsOrCallback !== null && typeof maybeCallback === 'function';
+      const callback = hasOptions ? maybeCallback : optionsOrCallback;
+      const options = hasOptions ? optionsOrCallback : {};
+      const limit = Math.max(1, Math.min(200, Number(options.limit) || 50));
+      const actor = options.actor ? String(options.actor) : null;
+      const source = options.source ? String(options.source) : null;
+      const cursor = options.cursor ? String(options.cursor) : null; // 取較舊的 created_at
+      const from = options.from ? String(options.from) : null;
+      const to = options.to ? String(options.to) : null;
+
+      const whereClauses = ['table_id = ?'];
+      const params = [tableId];
+      if (actor) { whereClauses.push('actor = ?'); params.push(actor); }
+      if (source) { whereClauses.push('source = ?'); params.push(source); }
+      if (from) { whereClauses.push('datetime(created_at) >= datetime(?)'); params.push(from); }
+      if (to) { whereClauses.push('datetime(created_at) <= datetime(?)'); params.push(to); }
+      if (cursor) { whereClauses.push('datetime(created_at) < datetime(?)'); params.push(cursor); }
+
+      const sql = `SELECT id, table_id, label, source, actor, created_at FROM table_history WHERE ${whereClauses.join(' AND ')} ORDER BY created_at DESC LIMIT ?`;
+      params.push(limit);
+      const list = this.db.prepare(sql).all(...params);
       callback(null, list);
     } catch (err) {
       callback(err, null);

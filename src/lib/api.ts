@@ -13,7 +13,7 @@ class ApiService {
     this.baseURL = API_BASE_URL;
   }
 
-  async request(path, options = {}) {
+  async request(path: string, options: RequestOptions = {}) {
     const baseUrl = getApiOrigin();
     const url = `${baseUrl}/api${path}`;
 
@@ -27,6 +27,7 @@ class ApiService {
     const response = await fetch(url, {
       headers: {
         'Content-Type': 'application/json',
+        ...(options.headers || {}),
       },
       ...options,
     });
@@ -165,8 +166,14 @@ class ApiService {
   }
 
   // 歷史版本 API
-  async getHistoryList(tableId: string) {
-    return this.request(`/tables/${tableId}/history`);
+  async getHistoryList(tableId: string, params?: { limit?: number; cursor?: string; actor?: string; source?: string; from?: string; to?: string }) {
+    const query = params
+      ? '?' + Object.entries(params)
+          .filter(([_, v]) => v !== undefined && v !== null && v !== '')
+          .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+          .join('&')
+      : '';
+    return this.request(`/tables/${tableId}/history${query}`);
   }
 
   async getHistoryEntry(tableId: string, historyId: string) {

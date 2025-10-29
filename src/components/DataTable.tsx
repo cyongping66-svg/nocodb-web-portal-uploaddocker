@@ -2095,7 +2095,8 @@ export function DataTable({
         );
       } else {
         const hasValidDict = !!(column.dictRef && column.dictRef.tableId && column.dictRef.columnId);
-        if (hasValidDict && column.type !== 'file' && column.type !== 'boolean') {
+        const typeStr = String(column.type);
+        if (hasValidDict && typeStr !== 'file' && typeStr !== 'boolean') {
           // 取得字典欄位資訊，判斷是否為日期型字典
           const dictTable = allTables.find(t => t.id === column.dictRef?.tableId);
           const dictCol = dictTable?.columns?.find((dc: Column) => dc.id === column.dictRef?.columnId);
