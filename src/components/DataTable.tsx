@@ -1308,11 +1308,12 @@ export function DataTable({
     }
   };
 
-  const saveEdit = (overrideValue?: any) => {
+  const saveEdit = (overrideValue?: any, explicitContext?: { rowId: string; columnId: string }) => {
   if (!isAuthenticated()) { toast.error('未登入，禁止編輯'); return; }
-    if (!editingCell) return;
+    const ctx = explicitContext || editingCell;
+    if (!ctx) return;
 
-    const column = table.columns.find(col => col.id === editingCell.columnId);
+    const column = table.columns.find(col => col.id === ctx.columnId);
     if (!column) return;
 
     // 中文註釋：若提供覆蓋值（例如單選當前改動），優先使用；否則退回使用當前狀態中的 editValue
@@ -1382,22 +1383,22 @@ export function DataTable({
     }
 
     // 獲取要更新的行
-    const rowToUpdate = table.rows.find(row => row.id === editingCell.rowId);
+    const rowToUpdate = table.rows.find(row => row.id === ctx.rowId);
     if (!rowToUpdate) return;
     // 新增：保存回滾需要的上下文
-    const prevRowId = editingCell.rowId;
-    const prevColumnId = editingCell.columnId;
+    const prevRowId = ctx.rowId;
+    const prevColumnId = ctx.columnId;
     const prevValue = rowToUpdate[prevColumnId];
 
     const updatedRowData = {
       ...rowToUpdate,
-      [editingCell.columnId]: processedValue
+      [ctx.columnId]: processedValue
     };
 
     // 优化：先立即更新本地表格数据，提供更好的用户体验
     // 同时调用API以确保数据持久化到服务器
     const updatedRows: Row[] = table.rows.map(row =>
-      row.id === editingCell.rowId
+      row.id === ctx.rowId
         ? updatedRowData
         : row
     );
@@ -1430,13 +1431,13 @@ export function DataTable({
     if (onUpdateRow) {
       // 只传递实际修改的字段，而不是整个行对象，提高效率
       const fieldData = {
-        [editingCell.columnId]: processedValue
+        [ctx.columnId]: processedValue
       };
       
       // 异步调用API并添加错误处理
       (async () => {
         try {
-          await onUpdateRow(table.id, editingCell.rowId, fieldData);
+          await onUpdateRow(table.id, ctx.rowId, fieldData);
           console.log('Row updated successfully');
         } catch (error) {
           console.error('Error updating row:', error);
@@ -1445,11 +1446,11 @@ export function DataTable({
           
           // 由于更新失败，恢复原始数据
           const originalRows: Row[] = table.rows.map(row => {
-            if (row.id === editingCell.rowId) {
-              const originalValue = row[editingCell.columnId];
+            if (row.id === ctx.rowId) {
+              const originalValue = row[ctx.columnId];
               return {
                 ...row,
-                [editingCell.columnId]: originalValue
+                [ctx.columnId]: originalValue
               };
             }
             return row;
@@ -1916,17 +1917,17 @@ export function DataTable({
 
     if (isEditing) {
       if (column.type === 'boolean') {
-        // 确保布尔值处理正确，支持多种输入格式
-        // 添加类型安全检查，确保editValue是字符串类型
+        // 確保布林值立即持久化，避免 onBlur 未觸發造成未保存
         const stringValue = typeof editValue === 'string' ? editValue : String(editValue);
         const isChecked = stringValue === 'true' || stringValue === '1';
         return (
-          <Checkbox
-            checked={isChecked}
-            onCheckedChange={(checked) => setEditValue(String(checked))}
-            onBlur={saveEdit}
-            autoFocus
-          />
+          <div className="w-full h-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+            <Checkbox
+              checked={isChecked}
+              onCheckedChange={(checked) => saveEdit(checked)}
+              autoFocus
+            />
+          </div>
         );
       } else if (column.type === 'select') {
         const columnOptions = getSelectOptions(column);
@@ -2221,7 +2222,16 @@ export function DataTable({
     // /显示不同列类型的逻辑
     const renderCellContent = () => {
       if (column.type === 'boolean') {
-        return <Checkbox checked={Boolean(value)} disabled />;
+        return (
+          <div className="w-full h-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+            <Checkbox
+              checked={Boolean(value)}
+              onCheckedChange={(checked) => {
+                saveEdit(checked, { rowId: row.id, columnId: column.id });
+              }}
+            />
+          </div>
+        );
       } else if (column.type === 'file' && value) {
         return (
           <div

@@ -352,11 +352,22 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
       setHistoryDetailCurrent(current);
 
       // 取得上一版本快照，用於顯示「本次操作」的變更（prev → current）
-      const sorted = [...historyList].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-      const idx = sorted.findIndex(e => e.id === entry.id);
-      const prevEntry = (idx >= 0 && idx < sorted.length - 1) ? sorted[idx + 1] : null;
-      if (prevEntry) {
-        const prev = await apiService.getHistoryEntry(activeTable.id, prevEntry.id);
+      // 優先從已載入列表尋找上一條；若未找到，則使用後端 cursor 依據當前條目的 created_at 拉取上一條
+      let prevEntryMeta: any | null = null;
+      try {
+        const sorted = [...historyList].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+        const idx = sorted.findIndex(e => e.id === entry.id);
+        prevEntryMeta = (idx >= 0 && idx < sorted.length - 1) ? sorted[idx + 1] : null;
+        if (!prevEntryMeta && current?.created_at) {
+          const listResp = await apiService.getHistoryList(activeTable.id, { limit: 1, cursor: current.created_at });
+          const items = Array.isArray(listResp) ? listResp : (listResp?.items || []);
+          prevEntryMeta = items[0] || null;
+        }
+      } catch (e) {
+        console.warn('查找上一歷史項失敗:', e);
+      }
+      if (prevEntryMeta?.id) {
+        const prev = await apiService.getHistoryEntry(activeTable.id, prevEntryMeta.id);
         setHistoryDetailPrevious(prev);
       } else {
         setHistoryDetailPrevious(null);
@@ -1558,7 +1569,16 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
                          setUndoStack(prev => [...prev, augmented]);
                          setLastOpInfo({ label: augmented.label, source: augmented.source, timestamp: augmented.timestamp });
                          try {
-                           await apiService.createHistorySnapshot(activeTable.id, { label: augmented.label, source: augmented.source });
+                           // 直接使用前端當前狀態構造快照，避免後端未落盤導致快照缺失變更
+                           const snapshot = activeTable ? {
+                             id: activeTable.id,
+                             name: activeTable.name,
+                             columns: activeTable.columns || [],
+                             rows: activeTable.rows || [],
+                             // 保留行順序（用當前渲染順序）
+                             order: (activeTable.rows || []).map(r => r.id),
+                           } : undefined;
+                           await apiService.createHistorySnapshot(activeTable.id, { label: augmented.label, source: augmented.source, snapshot });
                            await loadHistory(activeTable.id);
                          } catch (e) {
                            console.error('保存快照失敗:', e);
