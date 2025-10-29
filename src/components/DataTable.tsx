@@ -4,6 +4,8 @@ import * as XLSX from 'xlsx';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -363,6 +365,19 @@ export function DataTable({
     })();
   }, []);
 
+  // 新增：提供手動刷新系統子表列表的方法，供互動時即時更新
+  const refreshAllTables = async () => {
+    try {
+      setTablesLoading(true);
+      const ts = await apiService.getTables();
+      setAllTables(Array.isArray(ts) ? ts : []);
+    } catch (e) {
+      console.warn('刷新系統子表失敗', e);
+    } finally {
+      setTablesLoading(false);
+    }
+  };
+
   // 字典選項快取：key = `${tableId}:${columnId}`
   const [dictOptionsCache, setDictOptionsCache] = useState<{ [key: string]: string[] }>({});
   const getDictKey = (c: Column) => (c.dictRef && c.dictRef.tableId && c.dictRef.columnId) ? `${c.dictRef.tableId}:${c.dictRef.columnId}` : '';
@@ -384,6 +399,84 @@ export function DataTable({
     }
     return c.type === 'select' ? (c.options || []) : [];
   };
+
+  // 新增：提供手動刷新某欄位的字典選項的方法，打開下拉時即時更新
+  const refreshDictOptionsForColumn = async (c: Column) => {
+    const key = getDictKey(c);
+    if (!key) return;
+    try {
+      const rows = await apiService.getTableRows(c.dictRef!.tableId);
+      const dictTable = allTables.find(t => t.id === c.dictRef!.tableId);
+      const dictCol = dictTable?.columns?.find((dc: Column) => dc.id === c.dictRef!.columnId);
+      const isDateDict = dictCol?.type === 'date';
+      const isMultiSelectDict = dictCol?.type === 'select' && !!dictCol?.isMultiSelect;
+      const collect = (val: any): string => {
+        if (val === null || val === undefined || val === '') return '';
+        if (isDateDict) {
+          const d = new Date(String(val));
+          return isNaN(d.getTime()) ? '' : d.toISOString();
+        }
+        return String(val);
+      };
+      const setVals = new Set<string>();
+      for (const r of (rows || [])) {
+        const raw = r[c.dictRef!.columnId];
+        if (Array.isArray(raw) && isMultiSelectDict) {
+          for (const item of raw) {
+            const v = collect(item);
+            if (v) setVals.add(v);
+          }
+        } else {
+          const v = collect(raw);
+          if (v) setVals.add(v);
+        }
+      }
+      const values: string[] = Array.from(setVals);
+      setDictOptionsCache(prev => ({ ...prev, [key]: values }));
+    } catch (e) {
+      console.warn('刷新字典選項失敗', e);
+    }
+  };
+
+  // 新增：無感即時輪詢，定期刷新系統子表和字典選項（不需使用者操作）
+  const lastTablesSig = useRef<string>('');
+  useEffect(() => {
+    const pollingIntervalMs = 5000; // 5秒一次，兼顧即時性與效能
+    let timer: any = null;
+
+    const tick = async () => {
+      try {
+        // 刷新系統子表（僅在結構變更時更新狀態，避免不必要重渲染）
+        const ts = await apiService.getTables();
+        const makeSig = (tables: any[]) => JSON.stringify((tables || []).map((t) => ({
+          id: t.id,
+          name: t.name,
+          cols: (t.columns || []).map((c: Column) => ({ id: c.id, type: c.type, opts: Array.isArray(c.options) ? c.options.length : 0 })),
+        })));
+        const sigNew = makeSig(Array.isArray(ts) ? ts : []);
+        if (sigNew !== lastTablesSig.current) {
+          setAllTables(Array.isArray(ts) ? ts : []);
+          lastTablesSig.current = sigNew;
+        }
+
+        // 刷新當前表格中所有帶字典引用欄位的選項
+        const cols = (table.columns || []).filter(c => c.dictRef && c.dictRef.tableId && c.dictRef.columnId && !(c.dictRef.tableId === table.id && c.dictRef.columnId === c.id));
+        for (const c of cols) {
+          await refreshDictOptionsForColumn(c);
+        }
+      } catch (e) {
+        // 靜默失敗，不打擾使用者
+      }
+    };
+
+    // 立即執行一次，之後每隔一段時間執行
+    tick();
+    timer = setInterval(tick, pollingIntervalMs);
+
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [table.id, table.columns]);
 
   useEffect(() => {
     // 預抓取所有帶有 dictRef 的欄位的字典選項
@@ -648,6 +741,12 @@ export function DataTable({
     setConfigForm(null);
   };
   const [searchTerm, setSearchTerm] = useState('');
+  // 多選 Popover 專用的本地搜尋字典（每個單元格一個鍵，不影響全局搜尋）
+  const [multiSelectSearch, setMultiSelectSearch] = useState<Record<string, string>>({});
+  const [multiSelectOpen, setMultiSelectOpen] = useState<Record<string, boolean>>({});
+  const [multiSelectDraft, setMultiSelectDraft] = useState<Record<string, string[]>>({});
+  const [singleSelectOpen, setSingleSelectOpen] = useState<Record<string, boolean>>({});
+  const [singleSelectDraft, setSingleSelectDraft] = useState<Record<string, string>>({});
   const [filters, setFilters] = useState<{ [columnId: string]: string }>({});
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
@@ -1933,149 +2032,212 @@ export function DataTable({
         const columnOptions = getSelectOptions(column);
         // 检查是否为多选模式
         if (column.isMultiSelect) {
-          // 多选模式
-          const selectedValues = editValue ? (Array.isArray(editValue) ? editValue : [editValue]) : [];
+          // 多選模式 — 使用下拉選單顯示可勾選選項
+          const selectedValues = editValue ? (Array.isArray(editValue) ? editValue.map(String) : [String(editValue)]) : [];
           const isAllSelected = selectedValues.length === columnOptions.length;
-          
+
           return (
             <div className="w-full" onClick={(e) => e.stopPropagation()}>
-              <div className="flex flex-col gap-2">
-                {/* 搜索框 - 使用组件级状态 */}
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search location ID"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-9 pr-8 h-9 bg-background"
-                  />
-                  {searchTerm && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="absolute right-1 top-1/2 transform -translate-y-1/2 p-1 h-auto hover:bg-muted"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSearchTerm('');
-                      }}
-                    >
-                      <X className="w-3 h-3" />
-                    </Button>
-                  )}
-                </div>
-                
-                {/* 全选和重置按钮 */}
-                <div className="flex items-center justify-between px-2">
-                  <div 
-                    className="flex items-center gap-2 cursor-pointer"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (isAllSelected) {
-                        setEditValue([]);
-                      } else {
-                        setEditValue([...(columnOptions || [])]);
-                      }
-                    }}
-                  >
-                    <Checkbox 
-                      checked={isAllSelected}
-                      className="transition-all"
-                    />
-                    <span className="text-sm">全選</span>
-                  </div>
-                  
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    className="text-xs"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditValue([]);
-                      setSearchTerm('');
-                    }}
-                  >
-                    Reset
+              <Popover open={!!multiSelectOpen[`${row.id}:${column.id}`]} onOpenChange={(open) => {
+                setMultiSelectOpen(prev => ({ ...prev, [`${row.id}:${column.id}`]: open }));
+                if (!open) {
+                  // 關閉時退出編輯模式並清理草稿
+                  setEditingCell(null);
+                  setMultiSelectSearch(prev => {
+                    const key = `${row.id}:${column.id}`;
+                    const cp = { ...prev };
+                    delete cp[key];
+                    return cp;
+                  });
+                }
+              }}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8 w-full justify-between">
+                    <span className="truncate">
+                      {selectedValues.length > 0 ? `已選 ${selectedValues.length} 項` : '請選擇選項'}
+                    </span>
                   </Button>
-                </div>
-                
-                {/* 选项列表 - 使用组件级searchTerm进行过滤 */}
-                {columnOptions
-                  .filter(option => !searchTerm || option.toLowerCase().includes(searchTerm.toLowerCase()))
-                  .map((option, index) => (
-                  <div 
-                    key={option} 
-                    className={`flex items-center gap-2 p-2 rounded-md border cursor-pointer transition-colors ${selectedValues.map(v => String(v)).includes(option) ? 'bg-primary/10 border-primary/20' : 'hover:bg-muted'}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const current = selectedValues.map(v => String(v));
-                      let newSelectedValues: string[];
-                      if (current.includes(option)) {
-                        // 取消选择
-                        newSelectedValues = current.filter(val => val !== option);
-                      } else {
-                        // 添加选择
-                        newSelectedValues = [...current, option];
-                      }
-                      setEditValue(newSelectedValues);
-                    }}
-                  >
-                    <Checkbox 
-                      checked={selectedValues.map(v => String(v)).includes(option)}
-                      className="transition-all"
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-3 space-y-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="搜尋選項..."
+                      value={multiSelectSearch[`${row.id}:${column.id}`] || ''}
+                      onChange={(e) => setMultiSelectSearch(prev => ({ ...prev, [`${row.id}:${column.id}`]: e.target.value }))}
+                      className="pl-8 h-8"
                     />
-                    <div className="flex items-center gap-2">
-                      <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
-                      {option}
-                    </div>
                   </div>
-                ))}
-                
-                {/* 确认按钮 */}
-                <Button 
-                  variant="default" 
-                  size="sm" 
-                  className="mt-2 h-8"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // 中文註釋：多選欄位點擊「confirm」後，直接持久化保存，避免刷新後丟失
-                    saveEdit(); // 調用通用保存方法，內含本地更新 + 調用 API(onUpdateRow)
-                    toast.success('選項已更新'); // 中文註釋：保存成功時給出提示（沿用既有 toast 風格）
-                    setSearchTerm(''); // 僅重置本地搜尋狀態，不改動視覺樣式/佈局
-                  }}
-                >
-                  confirm
-                </Button>
-              </div>
+                  <div className="max-h-60 overflow-auto space-y-2">
+                     {columnOptions
+                       .filter((opt) => {
+                         const term = (multiSelectSearch[`${row.id}:${column.id}`] || '').toLowerCase();
+                         return !term || String(opt).toLowerCase().includes(term);
+                       })
+                       .map((option, index) => {
+                          const checked = selectedValues.includes(option);
+                          return (
+                            <label
+                              key={option}
+                              className="flex items-center gap-3 p-2 rounded hover:bg-muted/40 cursor-pointer"
+                              onClick={() => {
+                                const next = checked
+                                  ? selectedValues.filter(v => v !== option)
+                                  : [...selectedValues, option];
+                                setEditValue(next);
+                              }}
+                            >
+                              <Checkbox
+                                 checked={checked}
+                                 onCheckedChange={(c) => {
+                                   const next = c
+                                     ? [...selectedValues, option]
+                                     : selectedValues.filter(v => v !== option);
+                                   setEditValue(next);
+                                 }}
+                               />
+                              <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
+                              <span className="text-xs">{option}</span>
+                            </label>
+                          );
+                        })}
+                   </div>
+                   <div className="flex items-center justify-end gap-4 border-t pt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditValue([]);
+                          setMultiSelectSearch(prev => {
+                            const key = `${row.id}:${column.id}`;
+                            const cp = { ...prev };
+                            delete cp[key];
+                            return cp;
+                          });
+                        }}
+                      >
+                        重置
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => { 
+                          e.stopPropagation(); 
+                          saveEdit(); 
+                          setMultiSelectOpen(prev => ({ ...prev, [`${row.id}:${column.id}`]: false }));
+                          setEditingCell(null);
+                          toast.success('選項已更新'); 
+                        }}
+                      >
+                        確認
+                      </Button>
+                    </div>
+                </PopoverContent>
+              </Popover>
             </div>
           );
         } else {
-          // 单选模式
+          // 單選模式（改為 Popover + 草稿 + 確認/重置，點擊整列即可選）
           return (
             <div className="w-full" onClick={(e) => e.stopPropagation()}>
-              <Select 
-                // 確保值是字符串類型，修復類型錯誤
-                value={typeof editValue === 'string' ? editValue : ''} 
-                onValueChange={(val) => {
-                  // 中文註釋：單選欄位變更後，先更新本地編輯值，再傳入覆蓋值以避免 setState 尚未生效導致未保存
-                  setEditValue(val);
-                  saveEdit(val); // 中文註釋：立即以當前選中值覆蓋保存，避免使用舊的 editValue
-                  toast.success('選項已更新');
-                }}
-              >
-                <SelectTrigger className="h-8 w-full" onClick={(e) => e.stopPropagation()}>
-                  <SelectValue placeholder="請選擇選項" />
-                </SelectTrigger>
-                <SelectContent onClick={(e) => e.stopPropagation()}>
-                  {columnOptions.map((option, index) => (
-                    <SelectItem key={option} value={option} onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-2">
-                        <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
-                        {option}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Popover open={!!singleSelectOpen[`${row.id}:${column.id}`]} onOpenChange={(open) => {
+                setSingleSelectOpen(prev => ({ ...prev, [`${row.id}:${column.id}`]: open }));
+                if (!open) {
+                  // 關閉時退出編輯模式並清理草稿
+                  setEditingCell(null);
+                  setMultiSelectSearch(prev => {
+                    const key = `${row.id}:${column.id}`;
+                    const cp = { ...prev };
+                    delete cp[key];
+                    return cp;
+                  });
+                }
+              }}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="h-8 w-full justify-between">
+                    <span className="truncate">{typeof editValue === 'string' && editValue ? editValue : '請選擇選項'}</span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-3 space-y-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="搜尋選項..."
+                      value={multiSelectSearch[`${row.id}:${column.id}`] || ''}
+                      onChange={(e) => setMultiSelectSearch(prev => ({ ...prev, [`${row.id}:${column.id}`]: e.target.value }))}
+                      className="pl-8 h-8"
+                    />
+                  </div>
+                  <div className="max-h-60 overflow-auto space-y-2">
+                    {columnOptions
+                      .filter((opt) => {
+                        const term = (multiSelectSearch[`${row.id}:${column.id}`] || '').toLowerCase();
+                        return !term || String(opt).toLowerCase().includes(term);
+                      })
+                      .map((option, index) => {
+                        const checked = (typeof editValue === 'string' ? editValue : '') === option;
+                        return (
+                          <label
+                            key={option}
+                            className="flex items-center gap-3 p-2 rounded hover:bg-muted/40 cursor-pointer"
+                            onClick={() => setEditValue(option)}
+                          >
+                            <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
+                            <span className="text-xs">{option}</span>
+                          </label>
+                        );
+                      })}
+                  </div>
+                  <div className="flex items-center justify-between border-t pt-2">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditValue('');
+                        }}
+                      >
+                        清空
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const saved = typeof value === 'string' ? value : '';
+                          setEditValue(saved);
+                          setMultiSelectSearch(prev => {
+                            const key = `${row.id}:${column.id}`;
+                            const cp = { ...prev };
+                            delete cp[key];
+                            return cp;
+                          });
+                        }}
+                      >
+                        重置
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const finalVal = typeof editValue === 'string' ? editValue : '';
+                          saveEdit(finalVal);
+                          setSingleSelectOpen(prev => ({ ...prev, [`${row.id}:${column.id}`]: false }));
+                          setEditingCell(null);
+                          toast.success('選項已更新');
+                        }}
+                      >
+                        確認
+                      </Button>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           );
         }
@@ -2135,7 +2297,7 @@ export function DataTable({
                   toast.success('值已更新');
                 }}
               >
-                <SelectTrigger className="h-8 w-full" onClick={(e) => e.stopPropagation()}>
+                <SelectTrigger className="h-8 w-full" onClick={(e) => { e.stopPropagation(); refreshAllTables(); refreshDictOptionsForColumn(column); }}>
                   <SelectValue placeholder="請選擇字典值" />
                 </SelectTrigger>
                 <SelectContent onClick={(e) => e.stopPropagation()}>
@@ -2178,6 +2340,37 @@ export function DataTable({
                           } else {
                             toast.error('請輸入有效日期');
                           }
+                        }}
+                      >
+                        使用自訂
+                      </Button>
+                    </div>
+                  )}
+
+                  {!isDateDict && (
+                    <div className="p-2 border-b">
+                      <div className="text-xs text-muted-foreground mb-1">自訂輸入</div>
+                      <Input
+                        type={
+                          column.type === 'number' ? 'number' :
+                          column.type === 'email' ? 'email' :
+                          column.type === 'phone' ? 'tel' :
+                          column.type === 'url' ? 'url' : 'text'
+                        }
+                        className="h-8 w-full"
+                        value={typeof editValue === 'string' ? editValue : String(editValue ?? '')}
+                        onChange={(e) => setEditValue(e.target.value)}
+                      />
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="mt-2 h-8"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const v = typeof editValue === 'string' ? editValue : String(editValue ?? '');
+                          saveEdit(v);
+                          toast.success('值已更新');
+                          setEditingCell(null);
                         }}
                       >
                         使用自訂
@@ -2337,52 +2530,257 @@ export function DataTable({
         const columnOptions = getSelectOptions(column);
         // 检查是否为多选模式
         if (column.isMultiSelect) {
-          // 多选模式
-          const selectedValues = Array.isArray(value) ? value : value ? [value] : [];
-          
-          if (selectedValues.length > 0) {
-            return (
-              <div className="flex flex-wrap gap-1">
-                {selectedValues.map((selectedValue) => {
-                  const displayVal = String(selectedValue);
-                  if (columnOptions?.includes(displayVal)) {
-                    const optionIndex = columnOptions.indexOf(displayVal);
-                    const colorClass = getOptionColor(displayVal, optionIndex);
-                    
-                    return (
-                      <span 
-                        key={displayVal} 
-                        className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}
-                      >
-                        {displayVal}
-                      </span>
-                    );
-                  }
-                  return null;
-                })}
-              </div>
-            );
-          } else {
-            // 如果没有选中值，显示占位符
-            return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
-          }
+          // 多選模式（檢視狀態）：用下拉選單提供勾選，避免在單元格內直接操作
+          const selectedValues = Array.isArray(value) ? value.map(String) : value ? [String(value)] : [];
+          return (
+            <div className="w-full" onClick={(e) => e.stopPropagation()}>
+              <Popover open={!!multiSelectOpen[`${row.id}:${column.id}`]} onOpenChange={(open) => {
+                   setMultiSelectOpen(prev => ({ ...prev, [`${row.id}:${column.id}`]: open }));
+                   const key = `${row.id}:${column.id}`;
+                   if (open) {
+                     const current = Array.isArray(value) ? value.map(String) : value ? [String(value)] : [];
+                     setMultiSelectDraft(prev => ({ ...prev, [key]: current }));
+                   } else {
+                     setMultiSelectDraft(prev => { const cp = { ...prev }; delete cp[key]; return cp; });
+                   }
+                 }}>
+                 <PopoverTrigger asChild>
+                   <div className="min-h-[28px] flex items-center gap-1 flex-wrap cursor-pointer hover:bg-muted/50 rounded px-2">
+                     {(multiSelectOpen[`${row.id}:${column.id}`] && multiSelectDraft[`${row.id}:${column.id}`]?.length)
+                       ? multiSelectDraft[`${row.id}:${column.id}`]!.map((displayVal) => {
+                           if (columnOptions?.includes(displayVal)) {
+                             const optionIndex = columnOptions.indexOf(displayVal);
+                             const colorClass = getOptionColor(displayVal, optionIndex);
+                             return (
+                               <span key={displayVal} className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
+                                 {displayVal}
+                               </span>
+                             );
+                           }
+                           return null;
+                         })
+                       : (
+                         selectedValues.length > 0 ? (
+                           selectedValues.map((displayVal) => {
+                             if (columnOptions?.includes(displayVal)) {
+                               const optionIndex = columnOptions.indexOf(displayVal);
+                               const colorClass = getOptionColor(displayVal, optionIndex);
+                               return (
+                                 <span key={displayVal} className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
+                                   {displayVal}
+                                 </span>
+                               );
+                             }
+                             return null;
+                           })
+                         ) : (
+                           <span className="text-sm text-muted-foreground italic">請選擇選項</span>
+                         )
+                       )}
+                   </div>
+                 </PopoverTrigger>
+                 <PopoverContent className="w-72 p-3 space-y-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="搜尋選項..."
+                      value={multiSelectSearch[`${row.id}:${column.id}`] || ''}
+                      onChange={(e) => setMultiSelectSearch(prev => ({ ...prev, [`${row.id}:${column.id}`]: e.target.value }))}
+                      className="pl-8 h-8"
+                    />
+                  </div>
+                  <div className="max-h-60 overflow-auto space-y-2">
+                    {columnOptions
+                      .filter((opt) => {
+                        const term = (multiSelectSearch[`${row.id}:${column.id}`] || '').toLowerCase();
+                        return !term || String(opt).toLowerCase().includes(term);
+                      })
+                      .map((option, index) => {
+                        const key = `${row.id}:${column.id}`;
+                        const draft = multiSelectDraft[key] ?? selectedValues;
+                        const checked = draft.includes(option);
+                        return (
+                          <label
+                            key={option}
+                            className="flex items-center gap-3 p-2 rounded hover:bg-muted/40 cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const next = checked
+                                ? draft.filter(v => v !== option)
+                                : [...draft, option];
+                              setMultiSelectDraft(prev => ({ ...prev, [key]: next }));
+                            }}
+                          >
+                            <Checkbox
+                               checked={checked}
+                               onCheckedChange={(c) => {
+                                 const next = c
+                                   ? [...draft, option]
+                                   : draft.filter(v => v !== option);
+                                 setMultiSelectDraft(prev => ({ ...prev, [key]: next }));
+                               }}
+                             />
+                             <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
+                             <span className="text-xs">{option}</span>
+                          </label>
+                        );
+                      })}
+                  </div>
+                  <div className="flex items-center justify-end gap-4 border-t pt-2">
+                     <Button
+                       variant="outline"
+                       size="sm"
+                       onClick={(e) => {
+                         e.stopPropagation();
+                         const key = `${row.id}:${column.id}`;
+                         setMultiSelectDraft(prev => ({ ...prev, [key]: selectedValues }));
+                         setMultiSelectSearch(prev => {
+                           const cp = { ...prev };
+                           delete cp[key];
+                           return cp;
+                         });
+                       }}
+                     >
+                       重置
+                     </Button>
+                     <Button
+                       variant="outline"
+                       size="sm"
+                       onClick={(e) => { 
+                         e.stopPropagation(); 
+                         const key = `${row.id}:${column.id}`;
+                         const finalVals = multiSelectDraft[key] ?? selectedValues;
+                         saveEdit(finalVals, { rowId: row.id, columnId: column.id });
+                         setMultiSelectOpen(prev => ({ ...prev, [key]: false }));
+                         setMultiSelectDraft(prev => {
+                           const cp = { ...prev };
+                           delete cp[key];
+                           return cp;
+                         });
+                         toast.success('已更新'); 
+                       }}
+                     >
+                       確認
+                     </Button>
+                   </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          );
         } else {
-          // 单选模式
+          // 單選模式（檢視狀態）：改用 Popover，草稿預覽 + 確認/重置，點擊整列即可選
           const displayVal = value !== undefined && value !== null ? String(value) : '';
-          if (displayVal && columnOptions.includes(displayVal)) {
-            // 為選項類型添加顏色標籤
-            const optionIndex = columnOptions.indexOf(displayVal);
-            const colorClass = getOptionColor(displayVal, optionIndex);
-            
-            return (
-              <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
-                {displayVal}
-              </span>
-            );
-          } else {
-            // 如果没有值或值不在选项中，显示占位符
-            return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
-          }
+          const key = `${row.id}:${column.id}`;
+          return (
+            <div className="w-full" onClick={(e) => e.stopPropagation()}>
+              <Popover open={!!singleSelectOpen[key]} onOpenChange={(open) => {
+                setSingleSelectOpen(prev => ({ ...prev, [key]: open }));
+                if (open) {
+                  setSingleSelectDraft(prev => ({ ...prev, [key]: displayVal }));
+                } else {
+                  setSingleSelectDraft(prev => { const cp = { ...prev }; delete cp[key]; return cp; });
+                }
+              }}>
+                <PopoverTrigger asChild>
+                  <div className="min-h-[28px] flex items-center gap-1 flex-wrap cursor-pointer hover:bg-muted/50 rounded px-2">
+                    {(() => {
+                      const val = singleSelectOpen[key] ? (singleSelectDraft[key] ?? displayVal) : displayVal;
+                      if (val && columnOptions.includes(val)) {
+                        const optionIndex = columnOptions.indexOf(val);
+                        const colorClass = getOptionColor(val, optionIndex);
+                        return (
+                          <span className={`inline-flex items-center px-2 py-1 rounded-md text-xs font-medium border ${colorClass}`}>
+                            {val}
+                          </span>
+                        );
+                      }
+                      return <span className="text-sm text-muted-foreground italic">請選擇選項</span>;
+                    })()}
+                  </div>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-3 space-y-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="搜尋選項..."
+                      value={multiSelectSearch[key] || ''}
+                      onChange={(e) => setMultiSelectSearch(prev => ({ ...prev, [key]: e.target.value }))}
+                      className="pl-8 h-8"
+                    />
+                  </div>
+                  <div className="max-h-60 overflow-auto space-y-2">
+                    {columnOptions
+                      .filter((opt) => {
+                        const term = (multiSelectSearch[key] || '').toLowerCase();
+                        return !term || String(opt).toLowerCase().includes(term);
+                      })
+                      .map((option, index) => {
+                        const draftVal = singleSelectDraft[key] ?? displayVal;
+                        const checked = draftVal === option;
+                        return (
+                          <label
+                            key={option}
+                            className="flex items-center gap-3 p-2 rounded hover:bg-muted/40 cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSingleSelectDraft(prev => ({ ...prev, [key]: option }));
+                            }}
+                          >
+                            <div className={`w-3 h-3 rounded border ${getOptionColor(option, index)}`} />
+                            <span className="text-xs">{option}</span>
+                          </label>
+                        );
+                      })}
+                  </div>
+                  <div className="flex items-center justify-between border-t pt-2">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSingleSelectDraft(prev => ({ ...prev, [key]: '' }));
+                        }}
+                      >
+                        清空
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSingleSelectDraft(prev => ({ ...prev, [key]: displayVal }));
+                          setMultiSelectSearch(prev => {
+                            const cp = { ...prev };
+                            delete cp[key];
+                            return cp;
+                          });
+                        }}
+                      >
+                        重置
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const finalVal = singleSelectDraft[key] ?? displayVal;
+                          saveEdit(finalVal, { rowId: row.id, columnId: column.id });
+                          setSingleSelectOpen(prev => ({ ...prev, [key]: false }));
+                          setSingleSelectDraft(prev => { const cp = { ...prev }; delete cp[key]; return cp; });
+                          toast.success('已更新');
+                        }}
+                      >
+                        確認
+                      </Button>
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+          );
         }
       } else {
         return <span className="text-sm">{String(value || '')}</span>;
@@ -2967,7 +3365,7 @@ export function DataTable({
                           value={newColumn.dictRef.tableId}
                           onValueChange={(value) => setNewColumn({ ...newColumn, dictRef: { tableId: value, columnId: '' } })}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger onClick={() => refreshAllTables()}>
                             <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇字典表'} />
                           </SelectTrigger>
                           <SelectContent>
@@ -2988,7 +3386,7 @@ export function DataTable({
                               value={newColumn.dictRef.columnId}
                               onValueChange={(value) => setNewColumn({ ...newColumn, dictRef: { tableId: newColumn.dictRef?.tableId || '', columnId: value } })}
                             >
-                              <SelectTrigger>
+                              <SelectTrigger onClick={() => refreshAllTables()}>
                                 <SelectValue placeholder={sameTypeCols.length === 0 ? '請先選擇字典表' : '選擇同類型字典列'} />
                               </SelectTrigger>
                               <SelectContent>
@@ -3117,7 +3515,7 @@ export function DataTable({
                               value={configForm.dictRef.tableId}
                               onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: value, columnId: '' } })}
                             >
-                              <SelectTrigger>
+                              <SelectTrigger onClick={() => refreshAllTables()}>
                                 <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇字典表'} />
                               </SelectTrigger>
                               <SelectContent>
@@ -3137,7 +3535,7 @@ export function DataTable({
                                   value={configForm.dictRef.columnId}
                                   onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: configForm.dictRef?.tableId || '', columnId: value } })}
                                 >
-                                  <SelectTrigger>
+                                  <SelectTrigger onClick={() => refreshAllTables()}>
                                     <SelectValue placeholder={dictCols.length === 0 ? '請先選擇字典表' : '選擇字典列'} />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -3203,9 +3601,9 @@ export function DataTable({
                               value={configForm.dictRef.tableId}
                               onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: value, columnId: '' } })}
                             >
-                              <SelectTrigger>
-                                <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇字典表'} />
-                              </SelectTrigger>
+                              <SelectTrigger onClick={() => refreshAllTables()}>
+                              <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇字典表'} />
+                            </SelectTrigger>
                               <SelectContent>
                                 {allTables.map((t) => (
                                   <SelectItem key={t.id} value={t.id}>{t.name || t.id}</SelectItem>
@@ -3223,7 +3621,7 @@ export function DataTable({
                                   value={configForm.dictRef.columnId}
                                   onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: configForm.dictRef?.tableId || '', columnId: value } })}
                                 >
-                                  <SelectTrigger>
+                                  <SelectTrigger onClick={() => refreshAllTables()}>
                                     <SelectValue placeholder={dictCols.length === 0 ? '請先選擇字典表' : '選擇字典列'} />
                                   </SelectTrigger>
                                   <SelectContent>
