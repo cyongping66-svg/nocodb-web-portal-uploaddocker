@@ -1524,9 +1524,6 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
                        <div className="text-muted-foreground">無</div>
                      )}
                    </div>
-                   <div className="pt-2 border-t">
-                     <Button variant="destructive" className="w-full" onClick={handleLogout}>退出登錄</Button>
-                   </div>
                  </div>
                </DialogContent>
              </Dialog>
