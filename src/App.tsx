@@ -50,6 +50,11 @@ function App() {
   const [isPermissionsSettingsOpen, setIsPermissionsSettingsOpen] = useState(false);
   const [targetUsername, setTargetUsername] = useState<string>('');
   const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
+  // 新增：賬號詳情對話框開關
+  const [isAccountDialogOpen, setIsAccountDialogOpen] = useState(false);
+  const [currentEmail, setCurrentEmail] = useState<string | null>(null);
+  const [currentGroups, setCurrentGroups] = useState<string[]>([]);
+  const [currentScope, setCurrentScope] = useState<string | null>(null);
   // 新增：保護密碼登入的管理員與 Foundation 使用者列表
   const [isPasswordAdmin, setIsPasswordAdmin] = useState<boolean>(false);
   const [foundationUsers, setFoundationUsers] = useState<string[]>([]);
@@ -144,6 +149,71 @@ function App() {
     window.open(url, 'foundationLogin');
   };
 
+  const startOidcLogin = async () => {
+    try {
+      const AUTHORIZE_URL = 'https://ome-account.wiltechs.com/connect/authorize';
+      const REDIRECT_URI = 'http://localhost:5001';
+      const CLIENT_ID = '932647bf-39db-4991-8589-09bdb4074d2b';
+      const SCOPE = 'offline_access openid email phone profile';
+
+      const base64url = (buf: Uint8Array) => {
+        return btoa(String.fromCharCode(...Array.from(buf)))
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+      };
+      const randomBytes = (len: number) => {
+        const arr = new Uint8Array(len);
+        window.crypto.getRandomValues(arr);
+        return arr;
+      };
+      const codeVerifier = base64url(randomBytes(32));
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const digest = await window.crypto.subtle.digest('SHA-256', data);
+      const codeChallenge = base64url(new Uint8Array(digest));
+      const state = base64url(randomBytes(16));
+
+      sessionStorage.setItem('oidc_state', state);
+      sessionStorage.setItem('oidc_verifier', codeVerifier);
+      sessionStorage.setItem('oidc_return_to', window.location.href);
+
+      const u = new URL(AUTHORIZE_URL);
+      u.searchParams.set('client_id', CLIENT_ID);
+      u.searchParams.set('redirect_uri', REDIRECT_URI);
+      u.searchParams.set('response_type', 'code');
+      u.searchParams.set('scope', SCOPE);
+      u.searchParams.set('code_challenge', codeChallenge);
+      u.searchParams.set('code_challenge_method', 'S256');
+      u.searchParams.set('state', state);
+      window.location.href = u.toString();
+    } catch (e) {
+      console.error('startOidcLogin error', e);
+      toast.error('OIDC 登入初始化失敗');
+    }
+  };
+
+
+
+  // 讀取本地緩存的 email / groups / scope
+  useEffect(() => {
+    try {
+      const email = localStorage.getItem('foundation_user_email');
+      const groupsRaw = localStorage.getItem('foundation_user_groups');
+      const scope = localStorage.getItem('foundation_user_scope');
+      if (email) setCurrentEmail(email);
+      if (groupsRaw) {
+        try {
+          const parsed = JSON.parse(groupsRaw);
+          if (Array.isArray(parsed)) setCurrentGroups(parsed);
+        } catch {
+          if (groupsRaw.includes(',')) setCurrentGroups(groupsRaw.split(',').map(s => s.trim()).filter(Boolean));
+        }
+      }
+      if (scope) setCurrentScope(scope);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       const data = (event as any).data;
@@ -200,18 +270,213 @@ function App() {
     return () => window.removeEventListener('message', handler);
   }, []);
 
+  // 新增：OIDC 回調處理（前端交換 code）
+  useEffect(() => {
+    (async () => {
+      try {
+        const params = new URLSearchParams(window.location.search || '');
+        const code = params.get('code');
+        const state = params.get('state');
+        if (!code) return;
+
+        const expectedState = sessionStorage.getItem('oidc_state');
+        if (expectedState && state && state !== expectedState) {
+          toast.error('OIDC 回調 state 不匹配');
+          return;
+        }
+        const codeVerifier = sessionStorage.getItem('oidc_verifier') || '';
+        const REDIRECT_URI = 'http://localhost:5001';
+        const CLIENT_ID = '932647bf-39db-4991-8589-09bdb4074d2b';
+
+        const body = new URLSearchParams();
+        body.set('grant_type', 'authorization_code');
+        body.set('client_id', CLIENT_ID);
+        body.set('redirect_uri', REDIRECT_URI);
+        body.set('code', code);
+        body.set('code_verifier', codeVerifier);
+
+        const resp = await fetch('https://ome-account.wiltechs.com/connect/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        });
+        const tok = await resp.json();
+        if (!resp.ok) {
+          console.error('OIDC token exchange error', tok);
+          toast.error('OIDC 令牌交換失敗');
+          return;
+        }
+
+        const idToken = tok.id_token as string | undefined;
+        const accessToken = tok.access_token as string | undefined;
+        const refreshToken = tok.refresh_token as string | undefined;
+
+        const base64urlDecode = (input: string) => {
+          const s = input.replace(/-/g, '+').replace(/_/g, '/');
+          const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
+          const str = atob(s + pad);
+          const bytes = new Uint8Array([...str].map((c) => c.charCodeAt(0)));
+          const decoder = new TextDecoder('utf-8');
+          return decoder.decode(bytes);
+        };
+
+        if (idToken) {
+          try {
+            const parts = idToken.split('.');
+            if (parts.length >= 2) {
+              const payload = JSON.parse(base64urlDecode(parts[1]));
+              const name = payload.name || payload.preferred_username || payload.email || (payload.sub ? String(payload.sub).slice(0, 8) : null);
+              if (name) {
+                try { localStorage.setItem('currentUserName', String(name)); } catch {}
+                try { localStorage.setItem('foundation_user_name', String(name)); } catch {}
+                setCurrentUserName(String(name));
+              }
+              const groups = Array.isArray(payload.groups) ? payload.groups : [];
+              const isAdvanced = groups.includes('permission-admin');
+              const nextPerms = isAdvanced ? ['admin.manage'] : [];
+              if (nextPerms.length > 0) {
+                try { localStorage.setItem('foundation_user_permissions', JSON.stringify(nextPerms)); } catch {}
+                setCurrentPermissions(nextPerms);
+              }
+              const role = typeof payload.role === 'string' ? payload.role : null;
+              if (role) {
+                try { localStorage.setItem('foundation_user_role', role); } catch {}
+                setCurrentRole(role);
+              }
+            }
+          } catch (e) {
+            console.warn('解析 id_token 失敗', e);
+          }
+        }
+
+        if (accessToken) {
+          try { localStorage.setItem('oidc_access_token', accessToken); } catch {}
+        }
+        if (refreshToken) {
+          try { localStorage.setItem('oidc_refresh_token', refreshToken); } catch {}
+        }
+
+        // 清理暫存 & 還原網址
+        try {
+          sessionStorage.removeItem('oidc_state');
+          sessionStorage.removeItem('oidc_verifier');
+          const returnTo = sessionStorage.getItem('oidc_return_to');
+          if (returnTo) {
+            sessionStorage.removeItem('oidc_return_to');
+            window.history.replaceState(null, '', returnTo);
+          } else {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('code');
+            url.searchParams.delete('state');
+            window.history.replaceState(null, '', url.toString());
+          }
+        } catch {}
+
+        // 登入後補拉取 /auth/me 以校正名稱/角色/權限（避免 id_token 無名稱時顯示為未登入）
+        try {
+          const me = await apiService.getAuthMe();
+          if (me && me.authenticated && me.user) {
+            const data = me.user;
+            const name2 = data.name || data.preferred_username || data.email || (data.sub ? String(data.sub).slice(0, 8) : null);
+            if (name2) {
+              try { localStorage.setItem('currentUserName', name2); } catch {}
+              try { localStorage.setItem('foundation_user_name', name2); } catch {}
+              setCurrentUserName(name2);
+            }
+            const foundationRole2 = (data.raw && data.raw.role) ? String(data.raw.role) : null;
+            if (foundationRole2) {
+              try { localStorage.setItem('foundation_user_role', foundationRole2); } catch {}
+              setCurrentRole(foundationRole2);
+            }
+            let nextPerms2: string[] = [];
+            const groups2 = Array.isArray(data.groups) ? data.groups : [];
+            const isAdvanced2 = groups2.includes('permission-admin');
+            if (isAdvanced2) {
+              nextPerms2 = Array.from(new Set([...(nextPerms2 || []), 'admin.manage'])) as string[];
+            }
+            if (nextPerms2.length > 0) {
+              try { localStorage.setItem('foundation_user_permissions', JSON.stringify(nextPerms2)); } catch {}
+              setCurrentPermissions(nextPerms2);
+            }
+            // 保存 email / groups / scope
+            {
+              const email2 = data.email || null;
+              if (email2) { try { localStorage.setItem('foundation_user_email', email2); } catch {}; setCurrentEmail(email2); }
+              try { localStorage.setItem('foundation_user_groups', JSON.stringify(groups2)); } catch {}
+              setCurrentGroups(groups2);
+              const scope2 = (data.scope || (data.raw && data.raw.scope) || null);
+              if (scope2) { try { localStorage.setItem('foundation_user_scope', String(scope2)); } catch {}; setCurrentScope(String(scope2)); }
+            }
+          }
+        } catch (e) {
+          console.warn('OIDC 登入後讀取 /auth/me 失敗', e);
+        }
+
+        toast.success('OIDC 登入成功');
+        setIsLoginDialogOpen(false);
+      } catch (e) {
+        console.error('處理 OIDC 回調失敗', e);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const me = await apiService.getAuthMe();
+        if (me && me.authenticated && me.user) {
+          const data = me.user;
+          const name = data.name || data.preferred_username || data.email;
+          if (name) {
+            try { localStorage.setItem('currentUserName', name); } catch {}
+            setCurrentUserName(name);
+          }
+          const foundationRole = (data.raw && data.raw.role) ? String(data.raw.role) : null;
+          if (foundationRole) {
+            try { localStorage.setItem('foundation_user_role', foundationRole); } catch {}
+            setCurrentRole(foundationRole);
+          }
+          let nextPerms: string[] = [];
+          const groups = Array.isArray(data.groups) ? data.groups : [];
+          const isAdvanced = groups.includes('permission-admin');
+          if (isAdvanced) {
+            nextPerms = Array.from(new Set([...(nextPerms || []), 'admin.manage'])) as string[];
+          }
+          if (nextPerms.length > 0) {
+            try { localStorage.setItem('foundation_user_permissions', JSON.stringify(nextPerms)); } catch {}
+            setCurrentPermissions(nextPerms);
+          }
+          // 保存 email / groups / scope
+          {
+            const email = data.email || null;
+            if (email) { try { localStorage.setItem('foundation_user_email', email); } catch {}; setCurrentEmail(email); }
+            try { localStorage.setItem('foundation_user_groups', JSON.stringify(groups)); } catch {}
+            setCurrentGroups(groups);
+            const scope = (data.scope || (data.raw && data.raw.scope) || null);
+            if (scope) { try { localStorage.setItem('foundation_user_scope', String(scope)); } catch {}; setCurrentScope(String(scope)); }
+          }
+          setIsLoginDialogOpen(false);
+        }
+      } catch {
+        // 未登入時忽略
+      }
+    })();
+  }, []);
+
   const handleLogout = () => {
     try {
-      localStorage.removeItem('currentUserName');
-      localStorage.removeItem('foundation_user_name');
-      localStorage.removeItem('foundation_user_role');
-      localStorage.removeItem('foundation_user_permissions');
-      localStorage.removeItem('admin_login_method');
+      // 退出登錄時清空本地與會話緩存
+      localStorage.clear();
+      try { sessionStorage.clear(); } catch {}
     } catch {}
     setCurrentUserName(null);
     setCurrentRole(null);
     setCurrentPermissions([]);
     setIsPasswordAdmin(false);
+    setCurrentEmail(null);
+    setCurrentGroups([]);
+    setCurrentScope(null);
+    setIsAccountDialogOpen(false);
     toast.success('已登出');
   };
   // 新增：全域可回滾堆疊（支持連續回滾）
@@ -1043,8 +1308,8 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
                   <DialogTitle>登入</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-3">
-                  <div className="text-sm text-muted-foreground">請使用 Foundation 帳號驗證登入，或以管理員密碼登入。</div>
-                  <Button onClick={startFoundationLogin} className="w-full">使用 Foundation 登入</Button>
+                  <div className="text-sm text-muted-foreground">請使用 OIDC 帳號驗證登入，或以管理員密碼登入。</div>
+                  <Button onClick={startOidcLogin} className="w-full">使用 OIDC 登入</Button>
                   <div className="space-y-2 pt-2">
                     <Label htmlFor="adminPassword">管理員密碼</Label>
                     <Input id="adminPassword" type="password" placeholder="輸入管理員密碼" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
@@ -1175,29 +1440,96 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
           </div>
           <div className="mt-auto p-4 border-t border-border">
              {/* 當前操作用戶顯示（搬至底部，與反饋入口並列） */}
-             <ContextMenu>
-               <ContextMenuTrigger asChild>
-                 <div className="flex items-center justify-between text-sm mb-2 cursor-context-menu select-none rounded-md px-3 py-2 hover:bg-muted">
-                   <div className="flex items-center gap-2">
-                     <User className={`w-4 h-4 ${currentUserName ? 'text-green-600' : 'text-muted-foreground'}`} />
-                     <span className={currentUserName ? 'text-foreground font-medium' : 'text-muted-foreground'}>
-                       {currentUserName || '未登入'}
-                     </span>
+             {currentUserName ? (
+               <ContextMenu>
+                 <ContextMenuTrigger asChild>
+                   <div className="flex items-center justify-between text-sm mb-2 cursor-context-menu select-none rounded-md px-3 py-2 hover:bg-muted">
+                     <div className="flex items-center gap-2">
+                       <User className={`w-4 h-4 ${currentUserName ? 'text-green-600' : 'text-muted-foreground'}`} />
+                       <span className={currentUserName ? 'text-foreground font-medium' : 'text-muted-foreground'}>
+                         {currentUserName || '未登入'}
+                       </span>
+                     </div>
                    </div>
-                   {!currentUserName && (
-                     <button className="px-2 py-1 rounded-md border border-border bg-card text-foreground hover:bg-muted" onClick={() => setIsLoginDialogOpen(true)}>登入</button>
+                 </ContextMenuTrigger>
+                 <ContextMenuContent className="min-w-[200px]">
+                   <ContextMenuItem onClick={() => setIsAccountDialogOpen(true)}>賬號詳情</ContextMenuItem>
+                   <ContextMenuItem onClick={() => setIsPermissionsDialogOpen(true)}>查看權限</ContextMenuItem>
+                   {canAccessPermissionSettings && (
+                     <ContextMenuItem onClick={() => setIsPermissionsSettingsOpen(true)}>權限設置</ContextMenuItem>
                    )}
+                   <ContextMenuSeparator />
+                   <ContextMenuItem onClick={handleLogout}>退出登錄</ContextMenuItem>
+                 </ContextMenuContent>
+               </ContextMenu>
+             ) : (
+               <div
+                 className="flex items-center justify-between text-sm mb-2 cursor-default select-none rounded-md px-3 py-2 hover:bg-muted"
+                 onContextMenu={(e) => e.preventDefault()}
+               >
+                 <div className="flex items-center gap-2">
+                   <User className={`w-4 h-4 ${currentUserName ? 'text-green-600' : 'text-muted-foreground'}`} />
+                   <span className={currentUserName ? 'text-foreground font-medium' : 'text-muted-foreground'}>
+                     {currentUserName || '未登入'}
+                   </span>
                  </div>
-               </ContextMenuTrigger>
-               <ContextMenuContent className="min-w-[180px]">
-                 <ContextMenuItem onClick={handleLogout}>登出</ContextMenuItem>
-                 <ContextMenuSeparator />
-                 <ContextMenuItem onClick={() => setIsPermissionsDialogOpen(true)}>查看權限</ContextMenuItem>
-                 {canAccessPermissionSettings && (
-                   <ContextMenuItem onClick={() => setIsPermissionsSettingsOpen(true)}>權限設置</ContextMenuItem>
-                 )}
-               </ContextMenuContent>
-             </ContextMenu>
+                 <button className="px-2 py-1 rounded-md border border-border bg-card text-foreground hover:bg-muted" onClick={() => setIsLoginDialogOpen(true)}>登入</button>
+               </div>
+             )}
+  
+               {/* 賬號詳情對話框 */}
+             <Dialog open={isAccountDialogOpen} onOpenChange={setIsAccountDialogOpen}>
+               <DialogContent className="sm:max-w-md">
+                 <DialogHeader>
+                   <DialogTitle>賬號詳情</DialogTitle>
+                 </DialogHeader>
+                 <div className="space-y-3 text-sm">
+                   <div className="flex items-center justify-between">
+                     <span className="text-muted-foreground">賬號名</span>
+                     <span className="font-medium">{currentUserName || '未登入'}</span>
+                   </div>
+                   <div className="flex items-center justify-between">
+                     <span className="text-muted-foreground">角色</span>
+                     <span className="font-medium">{currentRole || '未設定'}</span>
+                   </div>
+                   <div className="flex items-center justify-between">
+                     <span className="text-muted-foreground">Email</span>
+                     <span className="font-medium">{currentEmail || '未提供'}</span>
+                   </div>
+                   <div>
+                     <div className="text-muted-foreground mb-1">用戶組</div>
+                     {(currentGroups && currentGroups.length > 0) ? (
+                       <div className="flex flex-wrap gap-2">
+                         {currentGroups.map((g) => (
+                           <span key={g} className="px-2 py-1 rounded-md border text-xs">{g}</span>
+                         ))}
+                       </div>
+                     ) : (
+                       <div className="text-muted-foreground">無</div>
+                     )}
+                   </div>
+                   <div className="flex items-center justify-between">
+                     <span className="text-muted-foreground">Scope</span>
+                     <span className="font-medium">{currentScope || '未提供'}</span>
+                   </div>
+                   <div>
+                     <div className="text-muted-foreground mb-1">權限</div>
+                     {(currentPermissions && currentPermissions.length > 0) ? (
+                       <div className="flex flex-wrap gap-2">
+                         {currentPermissions.map((p) => (
+                           <span key={p} className="px-2 py-1 rounded-md border text-xs">{p}</span>
+                         ))}
+                       </div>
+                     ) : (
+                       <div className="text-muted-foreground">無</div>
+                     )}
+                   </div>
+                   <div className="pt-2 border-t">
+                     <Button variant="destructive" className="w-full" onClick={handleLogout}>退出登錄</Button>
+                   </div>
+                 </div>
+               </DialogContent>
+             </Dialog>
 
              <a 
                href="https://omeoffice.com/usageFeedback" 

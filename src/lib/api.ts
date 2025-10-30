@@ -24,11 +24,17 @@ class ApiService {
       throw new Error('NOT_AUTHENTICATED');
     }
 
+    const token = (typeof window !== 'undefined')
+      ? (localStorage.getItem('oidc_access_token') || sessionStorage.getItem('oidc_access_token'))
+      : null;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
     const response = await fetch(url, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(options.headers || {}),
-      },
+      headers,
       ...options,
     });
 
@@ -134,9 +140,16 @@ class ApiService {
     const formData = new FormData();
     formData.append('file', file);
 
+    const token = (typeof window !== 'undefined')
+      ? (localStorage.getItem('oidc_access_token') || sessionStorage.getItem('oidc_access_token'))
+      : null;
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers,
     });
 
     if (!response.ok) {
@@ -198,6 +211,10 @@ class ApiService {
     return this.request(`/tables/${tableId}/history/${historyId}/revert`, {
       method: 'POST',
     });
+  }
+
+  async getAuthMe() {
+    return this.request(`/auth/me`);
   }
 }
 

@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
 const DatabaseWrapper = require('./db/database'); // 使用DatabaseWrapper类
+const cookieParser = require('cookie-parser');
 
 const app = express();
 const port = process.env.PORT || 8000; // 使用8000端口，避免端口冲突
@@ -16,6 +17,7 @@ app.use(helmet());
 app.use(morgan('combined'));
 app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 
 // 提供上傳文件的靜態訪問
 app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -25,6 +27,7 @@ app.use('/api/tables', require('./routes/tables'));
 app.use('/api/tables', require('./routes/rows'));
 app.use('/api/tables', require('./routes/history'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/auth', require('./routes/auth'));
 
 // 健康檢查
 app.get('/api/health', (req, res) => {
