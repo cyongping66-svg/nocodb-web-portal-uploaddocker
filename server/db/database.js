@@ -120,6 +120,34 @@ class DatabaseWrapper {
           "INSERT INTO tables (id, name, columns) VALUES (?, ?, ?)"
         );
         insertTable.run(tableId, '員工資料', JSON.stringify(columns));
+        
+        // 创建部门表作为关联示例
+        const deptTableId = 'sample-departments';
+        const deptColumns = [
+          { id: 'dept_id', name: '部門ID', type: 'text' },
+          { id: 'dept_name', name: '部門名稱', type: 'text' },
+          { id: 'manager', name: '部門經理', type: 'text' },
+          { id: 'location', name: '所在地點', type: 'text' }
+        ];
+        insertTable.run(deptTableId, '部門資料', JSON.stringify(deptColumns));
+        
+        // 创建项目表作为关联示例
+        const projectTableId = 'sample-projects';
+        const projectColumns = [
+          { id: 'proj_id', name: '專案ID', type: 'text' },
+          { id: 'proj_name', name: '專案名稱', type: 'text' },
+          { id: 'start_date', name: '開始日期', type: 'date' },
+          { id: 'end_date', name: '結束日期', type: 'date' },
+          { id: 'department', name: '負責部門', type: 'relation', 
+            relation: {
+              targetTableId: deptTableId,
+              targetColumnId: 'dept_id',
+              displayColumnId: 'dept_name',
+              type: 'single'
+            }
+          }
+        ];
+        insertTable.run(projectTableId, '專案資料', JSON.stringify(projectColumns));
 
         // 插入示例行數據
         const sampleRows = [
@@ -161,6 +189,59 @@ class DatabaseWrapper {
         
         sampleRows.forEach((rowData) => {
           insertRow.run(rowData.id, tableId, JSON.stringify(rowData));
+        });
+        
+        // 插入部门表数据
+        const deptRows = [
+          {
+            id: 'dept1',
+            dept_id: 'RD001',
+            dept_name: '研發部',
+            manager: '王大偉',
+            location: '台北總部'
+          },
+          {
+            id: 'dept2',
+            dept_id: 'MK002',
+            dept_name: '行銷部',
+            manager: '李小華',
+            location: '台北總部'
+          },
+          {
+            id: 'dept3',
+            dept_id: 'FN003',
+            dept_name: '財務部',
+            manager: '陳會計',
+            location: '台北總部'
+          }
+        ];
+        
+        deptRows.forEach((rowData) => {
+          insertRow.run(rowData.id, deptTableId, JSON.stringify(rowData));
+        });
+        
+        // 插入项目表数据
+        const projectRows = [
+          {
+            id: 'proj1',
+            proj_id: 'PRJ001',
+            proj_name: '新產品開發',
+            start_date: '2023-04-01',
+            end_date: '2023-12-31',
+            department: 'RD001' // 关联到部门ID
+          },
+          {
+            id: 'proj2',
+            proj_id: 'PRJ002',
+            proj_name: '品牌推廣計劃',
+            start_date: '2023-05-15',
+            end_date: '2023-11-30',
+            department: 'MK002' // 关联到部门ID
+          }
+        ];
+        
+        projectRows.forEach((rowData) => {
+          insertRow.run(rowData.id, projectTableId, JSON.stringify(rowData));
         });
 
         console.log('Sample data inserted successfully');

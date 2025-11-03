@@ -5,7 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 
 const db = new DatabaseWrapper(); // 创建DatabaseWrapper实例
 
-// 辅助函数：检测字典子表引用关系
+// 辅助函数：检测引用关系（包括字典子表和关联字段）
 function checkDictReferences(allTables, targetTableId, targetColumnId = null) {
   const references = [];
   
@@ -29,7 +29,7 @@ function checkDictReferences(allTables, targetTableId, targetColumnId = null) {
         // 确保column是对象
         if (!column || typeof column !== 'object') return;
         
-        // 确保dictRef存在且为对象
+        // 检查字典子表引用
         if (column.dictRef && 
             typeof column.dictRef === 'object' && 
             column.dictRef.tableId === targetTableId) {
@@ -46,7 +46,31 @@ function checkDictReferences(allTables, targetTableId, targetColumnId = null) {
             tableId: table.id,
             tableName: table.name,
             columnId: column.id,
-            columnName: column.name
+            columnName: column.name,
+            type: 'dictRef'
+          });
+        }
+        
+        // 检查关联字段引用
+        if (column.relation && 
+            typeof column.relation === 'object' && 
+            column.relation.targetTableId === targetTableId) {
+              
+          // 如果指定了列ID，则检查是否引用了该列
+          if (targetColumnId) {
+            // 检查是否引用了该列作为targetColumnId或displayColumnId
+            if ((!column.relation.targetColumnId || column.relation.targetColumnId !== targetColumnId) &&
+                (!column.relation.displayColumnId || column.relation.displayColumnId !== targetColumnId)) {
+              return;
+            }
+          }
+          
+          references.push({
+            tableId: table.id,
+            tableName: table.name,
+            columnId: column.id,
+            columnName: column.name,
+            type: 'relation'
           });
         }
       });
@@ -90,26 +114,192 @@ router.get('/:tableId', (req, res) => {
       return res.status(404).json({ error: 'Table not found' });
     }
 
-    // 獲取表格的行數據
-    db.getTableRows(tableId, (err, rows) => {
+    // 解析列信息
+    const columns = JSON.parse(table.columns);
+    
+    // 获取所有表格以处理关联
+    db.getTables((err, allTables) => {
       if (err) {
-        console.error('Error getting rows:', err);
-        return res.status(500).json({ error: 'Failed to get rows' });
+        console.error('Error getting all tables for relation processing:', err);
+        return res.status(500).json({ error: 'Failed to process relations' });
       }
 
-      // 解析數據
-      const parsedRows = rows.map(row => JSON.parse(row.data));
+      // 獲取表格的行數據
+      db.getTableRows(tableId, (err, rows) => {
+        if (err) {
+          console.error('Error getting rows:', err);
+          return res.status(500).json({ error: 'Failed to get rows' });
+        }
 
-      const result = {
-        ...table,
-        columns: JSON.parse(table.columns),
-        rows: parsedRows
-      };
+        // 解析數據
+        const parsedRows = rows.map(row => JSON.parse(row.data));
+        
+        // 处理关联字段数据
+        processRelationFields(allTables, columns, parsedRows)
+          .then(rowsWithRelations => {
+            const result = {
+              ...table,
+              columns: columns,
+              rows: rowsWithRelations
+            };
 
-      res.json(result);
+            res.json(result);
+          })
+          .catch(err => {
+            console.error('Error processing relation fields:', err);
+            // 如果关联处理出错，仍然返回基础数据
+            const result = {
+              ...table,
+              columns: columns,
+              rows: parsedRows
+            };
+            res.json(result);
+          });
+      });
     });
   });
 });
+
+// 处理关联字段数据的辅助函数
+function processRelationFields(allTables, columns, rows) {
+  return new Promise((resolve, reject) => {
+    try {
+      // 找出所有关联字段
+      const relationColumns = columns.filter(col => col.relation && typeof col.relation === 'object');
+      
+      if (relationColumns.length === 0) {
+        // 没有关联字段，直接返回
+        return resolve(rows);
+      }
+
+      // 构建表格信息映射
+      const tablesMap = {};
+      allTables.forEach(table => {
+        try {
+          tablesMap[table.id] = {
+            ...table,
+            columns: JSON.parse(table.columns)
+          };
+        } catch (e) {
+          console.warn(`Failed to parse columns for table ${table.id}`);
+        }
+      });
+
+      // 获取所有需要的目标表数据
+      const targetTableIds = new Set();
+      relationColumns.forEach(col => {
+        if (tablesMap[col.relation.targetTableId]) {
+          targetTableIds.add(col.relation.targetTableId);
+        }
+      });
+
+      // 如果没有有效的目标表，直接返回
+      if (targetTableIds.size === 0) {
+        return resolve(rows);
+      }
+
+      // 获取所有目标表的行数据
+      const targetTablesData = {};
+      let pendingQueries = targetTableIds.size;
+
+      // 当所有查询完成时处理数据
+      function handleAllDataFetched() {
+        try {
+          // 处理每行数据
+          const processedRows = rows.map(row => {
+            const processedRow = { ...row };
+            
+            // 处理每个关联字段
+            relationColumns.forEach(col => {
+              const relationData = col.relation;
+              const targetTable = tablesMap[relationData.targetTableId];
+              
+              if (!targetTable || !targetTablesData[relationData.targetTableId]) {
+                return; // 目标表不存在或数据未加载
+              }
+              
+              const targetColumn = relationData.targetColumnId;
+              const displayColumn = relationData.displayColumnId || targetColumn;
+              const isMultiSelect = relationData.multiSelect;
+              
+              // 获取关联值
+              const relationValue = row[col.id];
+              
+              if (!relationValue) {
+                return; // 没有关联值
+              }
+
+              // 处理多选和单选
+              if (isMultiSelect && Array.isArray(relationValue)) {
+                // 多选模式
+                const relatedItems = [];
+                
+                relationValue.forEach(id => {
+                  const matchedRow = targetTablesData[relationData.targetTableId].find(
+                    item => item[targetColumn] === id
+                  );
+                  
+                  if (matchedRow) {
+                    relatedItems.push({
+                      id: matchedRow[targetColumn],
+                      display: matchedRow[displayColumn],
+                      data: matchedRow
+                    });
+                  }
+                });
+                
+                processedRow[`${col.id}_relation`] = relatedItems;
+              } else {
+                // 单选模式
+                const matchedRow = targetTablesData[relationData.targetTableId].find(
+                  item => item[targetColumn] === relationValue
+                );
+                
+                if (matchedRow) {
+                  processedRow[`${col.id}_relation`] = {
+                    id: matchedRow[targetColumn],
+                    display: matchedRow[displayColumn],
+                    data: matchedRow
+                  };
+                }
+              }
+            });
+            
+            return processedRow;
+          });
+          
+          resolve(processedRows);
+        } catch (e) {
+          reject(e);
+        }
+      }
+
+      // 获取每个目标表的数据
+      targetTableIds.forEach(tableId => {
+        db.getTableRows(tableId, (err, targetRows) => {
+          pendingQueries--;
+          
+          if (!err && targetRows) {
+            targetTablesData[tableId] = targetRows.map(row => {
+              try {
+                return JSON.parse(row.data);
+              } catch (e) {
+                console.warn(`Failed to parse data for row in table ${tableId}`);
+                return {};
+              }
+            });
+          }
+          
+          if (pendingQueries === 0) {
+            handleAllDataFetched();
+          }
+        });
+      });
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
 
 // 創建新表格
 router.post('/', (req, res) => {
@@ -199,14 +389,16 @@ router.put('/:tableId', (req, res) => {
         });
       });
 
-      // 更新引用这些列的表格，移除无效的字典引用
+      // 更新引用这些列的表格，移除无效的引用
       tablesToUpdate.forEach(refTableId => {
         const refTable = allTables.find(t => t.id === refTableId);
         if (refTable) {
           try {
             const refColumns = JSON.parse(refTable.columns);
             const updatedColumns = refColumns.map(column => {
-              // 检查是否引用了被删除的列
+              // 检查是否引用了被删除的列或表格
+              
+              // 先处理字典引用
               if (column.dictRef && typeof column.dictRef === 'object' && column.dictRef.tableId === tableId) {
                 const isReferencingDeletedColumn = deletedColumns.some(
                   deletedCol => column.dictRef.columnId === deletedCol.id
@@ -219,6 +411,23 @@ router.put('/:tableId', (req, res) => {
                   };
                 }
               }
+              
+              // 处理关联字段引用
+              if (column.relation && typeof column.relation === 'object' && column.relation.targetTableId === tableId) {
+                // 检查是否引用了被删除的列
+                const isReferencingDeletedColumn = deletedColumns.some(
+                  deletedCol => column.relation.targetColumnId === deletedCol.id || 
+                               column.relation.displayColumnId === deletedCol.id
+                );
+                if (isReferencingDeletedColumn) {
+                  // 移除无效的关联引用
+                  return {
+                    ...column,
+                    relation: undefined
+                  };
+                }
+              }
+              
               return column;
             });
 
