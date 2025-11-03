@@ -39,7 +39,19 @@ class ApiService {
     });
 
     if (!response.ok) {
-      throw new Error(`API request failed: ${response.status}`);
+      // 尝试获取错误响应的JSON数据，特别是引用检测相关的信息
+      try {
+        const errorData = await response.json();
+        // 创建一个包含更多信息的错误对象
+        const enhancedError = new Error(errorData.message || `API request failed: ${response.status}`);
+        // 添加错误数据到错误对象中
+        (enhancedError as any).status = response.status;
+        (enhancedError as any).data = errorData;
+        throw enhancedError;
+      } catch (jsonError) {
+        // 如果无法解析JSON，则抛出原始错误
+        throw new Error(`API request failed: ${response.status}`);
+      }
     }
 
     try {
@@ -60,17 +72,27 @@ class ApiService {
     });
   }
 
-  async updateTable(tableId, tableData) {
-    return this.request(`/tables/${tableId}`, {
-      method: 'PUT',
-      body: JSON.stringify(tableData),
-    });
+  async updateTable(tableId, tableData, confirmed = false) {
+    try {
+      return await this.request(`/tables/${tableId}?confirmed=${confirmed}`, {
+        method: 'PUT',
+        body: JSON.stringify(tableData),
+      });
+    } catch (error) {
+      // 重新抛出错误以保持原有行为，但确保前端可以捕获并处理
+      throw error;
+    }
   }
 
-  async deleteTable(tableId) {
-    return this.request(`/tables/${tableId}`, {
-      method: 'DELETE',
-    });
+  async deleteTable(tableId, confirmed = false) {
+    try {
+      return await this.request(`/tables/${tableId}?confirmed=${confirmed}`, {
+        method: 'DELETE',
+      });
+    } catch (error) {
+      // 重新抛出错误以保持原有行为，但确保前端可以捕获并处理
+      throw error;
+    }
   }
 
   // 行數據相關 API

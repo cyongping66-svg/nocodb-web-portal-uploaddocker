@@ -1203,10 +1203,37 @@ export function DataTable({
 
   // 已移除表格視圖的欄位名稱編輯功能
 
-  const deleteColumn = (columnId: string) => {
+  const deleteColumn = async (columnId: string) => {
     const deletedIndex = table.columns.findIndex(col => col.id === columnId);
     const deletedColumn = table.columns.find(col => col.id === columnId);
     if (!deletedColumn) return;
+    
+    // 检查哪些其他表格的字段引用了这个要删除的字段
+    const referringFields: { tableName: string; columnName: string }[] = [];
+    
+    // 遍历所有表格查找引用关系
+    for (const t of allTables) {
+      for (const col of t.columns) {
+        if (col.dictRef && col.dictRef.tableId === table.id && col.dictRef.columnId === columnId) {
+          referringFields.push({ tableName: t.name || t.id, columnName: col.name || col.id });
+        }
+      }
+    }
+    
+    // 构建确认对话框消息
+    let confirmMessage = `确定要删除「${deletedColumn.name}」字段吗？`;
+    confirmMessage += '\n删除后，该字段中的所有数据将被永久删除。';
+    
+    if (referringFields.length > 0) {
+      confirmMessage += '\n\n警告：删除此字段将影响以下字典子表设置：';
+      referringFields.forEach(ref => {
+        confirmMessage += `\n- ${ref.tableName} 表的 ${ref.columnName} 字段`;
+      });
+      confirmMessage += '\n\n这些引用字段将失去字典子表设置，但不会清空原有已保存的数据。';
+    }
+    
+    const confirmed = window.confirm(confirmMessage);
+    if (!confirmed) return;
 
     // 快照刪除前的欄位值（僅保存被刪欄位的各行原值，用於回滾）
     const deletedValuesByRowId: Record<string, any> = {};
@@ -1214,17 +1241,21 @@ export function DataTable({
       deletedValuesByRowId[row.id] = (row as any)[columnId];
     }
 
+    // 准备更新的表格数据
     const updatedColumns = table.columns.filter(col => col.id !== columnId);
     const updatedRows: Row[] = table.rows.map(row => {
       const { [columnId]: deleted, ...rest } = row;
       return rest as Row;
     });
 
-    onUpdateTable({
+    const updatedTable = {
       ...table,
       columns: updatedColumns,
       rows: updatedRows
-    });
+    };
+
+    // 调用onUpdateTable，这会触发use-tables中的updateTable函数，包含确认对话框逻辑
+    await onUpdateTable(updatedTable);
 
     // 註冊回滾：復原刪除的欄位至原位置，並恢復各行對應值
     onSetLastOperation?.({
@@ -1241,7 +1272,7 @@ export function DataTable({
             const value = deletedValuesByRowId[row.id];
             return { ...row, [deletedColumn.id]: value } as Row;
           });
-          onUpdateTable({ ...current, columns: revertedColumns, rows: revertedRows });
+          await onUpdateTable({ ...current, columns: revertedColumns, rows: revertedRows });
           toast.success('已回滾欄位刪除');
         } catch (e) {
           console.error('回滾欄位刪除失敗:', e);
@@ -1249,8 +1280,6 @@ export function DataTable({
         }
       }
     });
-
-    toast.success('欄位刪除成功');
   };
 
   const addRow = async () => {
@@ -2406,6 +2435,8 @@ export function DataTable({
               column.type === 'phone' ? 'tel' :
               column.type === 'url' ? 'url' : 'text'
             }
+            // 允许输入0和负数
+            min={column.type === 'number' ? '-999999' : undefined}
             autoFocus
           />
         );
@@ -2783,7 +2814,8 @@ export function DataTable({
           );
         }
       } else {
-        return <span className="text-sm">{String(value || '')}</span>;
+        // 修复数字0不显示的问题：只有当value为undefined或null时才显示空字符串
+        return <span className="text-sm">{value === undefined || value === null ? '' : String(value)}</span>;
       }
     };
 

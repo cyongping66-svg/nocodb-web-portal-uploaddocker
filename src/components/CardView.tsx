@@ -612,6 +612,8 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
               if (e.key === 'Enter') handleSaveIfEditing();
             }}
             className="h-8"
+            // 允许输入0和负数
+            min={'-999999'}
           />
         );
 

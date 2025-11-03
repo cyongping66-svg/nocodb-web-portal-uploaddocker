@@ -122,9 +122,44 @@ export function useTables() {
       throw new Error('NOT_AUTHENTICATED');
     }
     try {
-      await apiService.deleteTable(tableId)
-      setTablesState(prev => prev.filter(t => t.id !== tableId))
-      toast.success('表格已刪除')
+      // 首先调用deleteTable API检查是否需要确认
+      const response = await apiService.deleteTable(tableId);
+      
+      // 检查是否需要确认删除
+      if (response && response.needsConfirmation && response.references) {
+        const references = response.references;
+        let message = '警告：删除此表格将影响以下引用它的字典子表设置\n\n';
+        references.forEach((ref: any) => {
+          message += `- ${ref.tableName} 表格的 ${ref.columnName} 字段\n`;
+        });
+        message += '\n确认要继续删除吗？删除后，相关字段的字典子表设置将被自动取消。';
+        
+        // 显示确认对话框
+        const confirmed = window.confirm(message);
+        if (!confirmed) {
+          return; // 用户取消删除
+        }
+        
+        // 用户确认后，带confirmed参数再次调用API
+        const finalResponse = await apiService.deleteTable(tableId, true);
+        
+        // 删除成功后更新本地状态
+        setTablesState(prev => prev.filter(t => t.id !== tableId))
+        toast.success('表格已刪除')
+        
+        // 如果有更新的引用信息，显示提示
+        if (finalResponse.updatedReferences && finalResponse.updatedReferences.length > 0) {
+          let refMessage = '已自动移除以下字典子表引用：\n';
+          finalResponse.updatedReferences.forEach((ref: any) => {
+            refMessage += `- ${ref.tableName} 表格的 ${ref.columnName} 字段\n`;
+          });
+          toast.info(refMessage, { duration: 5000 });
+        }
+      } else {
+        // 不需要确认，直接删除成功
+        setTablesState(prev => prev.filter(t => t.id !== tableId))
+        toast.success('表格已刪除')
+      }
     } catch (err) {
       console.error('Error deleting table:', err)
       toast.error('刪除表格失敗')
@@ -141,25 +176,132 @@ export function useTables() {
       const { rows, ...tableStructure } = updatedTable
       
       // 更新表格結構
-      await apiService.updateTable(updatedTable.id, tableStructure)
+      const response = await apiService.updateTable(updatedTable.id, tableStructure)
       
-      // 新增：持久化保存行順序（若有行數據）改用後端API
-      if (updatedTable.rows && Array.isArray(updatedTable.rows)) {
-        const orderIds = updatedTable.rows.map(r => r.id)
-        try {
-          await apiService.setRowOrder(updatedTable.id, orderIds)
-        } catch (err) {
-          // 行順序保存失敗不再視為致命錯誤，僅記錄日誌，避免打擹rer使用者
-          console.warn('setRowOrder failed, will continue without toast:', err)
+      // 检查是否需要确认更新（删除列会影响其他表格的字典子表设置）
+      if (response && response.needsConfirmation && response.references) {
+        const references = response.references;
+        
+        // 格式化引用信息，确保能正确显示所有受影响的表格和字段
+        let message = '警告：删除这些列将影响以下字典子表设置\n\n';
+        
+        if (Array.isArray(references)) {
+          // 处理后端返回的引用数据格式
+          references.forEach((refGroup: any) => {
+            if (refGroup.references && Array.isArray(refGroup.references)) {
+              message += `列 "${refGroup.columnName}" 被以下字段引用：\n`;
+              refGroup.references.forEach((ref: any) => {
+                message += `- ${ref.tableName} 表格的 ${ref.columnName} 字段\n`;
+              });
+              message += '\n';
+            } else if (refGroup.tableName && refGroup.columnName) {
+              // 处理简单格式的引用数据
+              message += `- ${refGroup.tableName} 表格的 ${refGroup.columnName} 字段\n`;
+            }
+          });
+        }
+        
+        message += '\n确认要继续删除吗？删除后，相关字段的字典子表设置将被自动取消。';
+        
+        // 显示确认对话框
+        const confirmed = window.confirm(message);
+        if (!confirmed) {
+          return; // 用户取消更新
+        }
+        
+        // 用户确认后，带confirmed参数再次调用API
+        const finalResponse = await apiService.updateTable(updatedTable.id, tableStructure, true);
+        
+        // 更新本地状态
+        if (updatedTable.rows && Array.isArray(updatedTable.rows)) {
+          const orderIds = updatedTable.rows.map(r => r.id)
+          try {
+            await apiService.setRowOrder(updatedTable.id, orderIds)
+          } catch (err) {
+            console.warn('setRowOrder failed, will continue without toast:', err)
+          }
+        }
+        
+        // 如果有更新的引用信息，说明有其他表格的字典子表设置被修改
+        // 重新获取所有表格数据以确保最新状态
+        if (finalResponse.updatedReferences && finalResponse.updatedReferences.length > 0) {
+          // 先显示提示信息
+          let refMessage = '已自动移除以下字典子表引用：\n';
+          
+          // 格式化引用信息
+          if (Array.isArray(finalResponse.updatedReferences)) {
+            finalResponse.updatedReferences.forEach((refGroup: any) => {
+              if (refGroup.references && Array.isArray(refGroup.references)) {
+                refMessage += `列 "${refGroup.columnName}" 的引用：\n`;
+                refGroup.references.forEach((ref: any) => {
+                  refMessage += `- ${ref.tableName} 表格的 ${ref.columnName} 字段\n`;
+                });
+              } else if (refGroup.tableName && refGroup.columnName) {
+                refMessage += `- ${refGroup.tableName} 表格的 ${refGroup.columnName} 字段\n`;
+              }
+            });
+          }
+          
+          toast.info(refMessage, { duration: 5000 });
+          
+          // 重新获取所有表格数据，确保引用信息已更新
+          await loadTables();
+        } else {
+          // 如果没有引用更新，只更新当前表格
+          setTablesState(prev => 
+            prev.map(table => 
+              table.id === updatedTable.id ? updatedTable : table
+            )
+          );
+        }
+        
+        toast.success('表格更新成功')
+      } else {
+        // 不需要确认，直接更新成功
+        // 新增：持久化保存行順序（若有行數據）改用後端API
+        if (updatedTable.rows && Array.isArray(updatedTable.rows)) {
+          const orderIds = updatedTable.rows.map(r => r.id)
+          try {
+            await apiService.setRowOrder(updatedTable.id, orderIds)
+          } catch (err) {
+            // 行順序保存失敗不再視為致命錯誤，僅記錄日誌，避免打擹rer使用者
+            console.warn('setRowOrder failed, will continue without toast:', err)
+          }
+        }
+        
+        // 如果有更新的引用信息，说明有其他表格的字典子表设置被修改
+        // 重新获取所有表格数据以确保最新状态
+        if (response && response.updatedReferences && response.updatedReferences.length > 0) {
+          // 先显示提示信息
+          let message = '表格更新成功，已自动移除以下无效的字典子表引用：\n';
+          
+          // 格式化引用信息
+          if (Array.isArray(response.updatedReferences)) {
+            response.updatedReferences.forEach((refGroup: any) => {
+              if (refGroup.references && Array.isArray(refGroup.references)) {
+                message += `列 "${refGroup.columnName}" 的引用：\n`;
+                refGroup.references.forEach((ref: any) => {
+                  message += `- ${ref.tableName} 表格的 ${ref.columnName} 字段\n`;
+                });
+              } else if (refGroup.tableName && refGroup.columnName) {
+                message += `- ${refGroup.tableName} 表格的 ${refGroup.columnName} 字段\n`;
+              }
+            });
+          }
+          
+          toast.info(message, { duration: 5000 });
+          
+          // 重新获取所有表格数据，确保引用信息已更新
+          await loadTables();
+        } else {
+          // 如果没有引用更新，只更新当前表格
+          setTablesState(prev => 
+            prev.map(table => 
+              table.id === updatedTable.id ? updatedTable : table
+            )
+          );
         }
       }
-      
-      // 更新本地狀態
-      setTablesState(prev => 
-        prev.map(table => 
-          table.id === updatedTable.id ? updatedTable : table
-        )
-      )
     } catch (err) {
       console.error('Error updating table:', err)
       toast.error('更新表格失敗')
