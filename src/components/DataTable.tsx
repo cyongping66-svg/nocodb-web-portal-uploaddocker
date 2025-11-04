@@ -78,9 +78,10 @@ interface SortableHeaderProps {
   onResizeStart: (e: React.MouseEvent, columnId: string) => void;
   resizingColumn: string | null;
   onOpenColumnConfig: (columnId: string) => void;
+  allTables: any[];
 }
 
-function SortableHeader({ column, sortConfig, onSort, onDelete, columnWidth, onResizeStart, resizingColumn, onOpenColumnConfig }: SortableHeaderProps) {
+function SortableHeader({ column, sortConfig, onSort, onDelete, columnWidth, onResizeStart, resizingColumn, onOpenColumnConfig, allTables }: SortableHeaderProps) {
 
 
   const {
@@ -128,12 +129,19 @@ function SortableHeader({ column, sortConfig, onSort, onDelete, columnWidth, onR
           
           <div className="flex items-center gap-1">
             <div className="flex items-center gap-1">
-              <span 
-                className="px-1 py-0.5 rounded text-sm font-medium text-foreground whitespace-nowrap"
-                title={column.name}
-              >
-                {column.name}
-              </span>
+                <div>
+                  <span 
+                    className="px-1 py-0.5 rounded text-sm font-medium text-foreground whitespace-nowrap"
+                    title={column.name}
+                  >
+                    {column.name}
+                  </span>
+                  {column.relation?.targetTableId && (
+                    <span className="text-xs text-muted-foreground block mt-0.5">
+                      關聯表: {allTables.find(t => t.id === column.relation?.targetTableId)?.name || '未知表格'}
+                    </span>
+                  )}
+                </div>
               <button
                 className="flex items-center justify-center w-5 h-5 text-xs text-muted-foreground hover:text-primary hover:bg-muted/50 rounded transition-colors"
                 onClick={() => onSort(column.id)}
@@ -594,15 +602,6 @@ export function DataTable({
   const saveColumnConfig = async () => {
     if (!configColumnId || !configForm) return;
 
-    // 禁止將字典來源設置為自身欄位
-    if (configForm.dictRef && configForm.dictRef.tableId && configForm.dictRef.columnId) {
-      const isSelf = configForm.dictRef.tableId === table.id && configForm.dictRef.columnId === configColumnId;
-      if (isSelf) {
-        toast.error('不允許將字典子表關聯至自身欄位');
-        return;
-      }
-    }
-
     // 禁止將关联来源设置为自身表
     if (configForm.relation && configForm.relation.targetTableId === table.id) {
       toast.error('不允許關聯至自身表格');
@@ -617,14 +616,16 @@ export function DataTable({
             name: configForm.name.trim() || col.name,
             type: configForm.type,
             options: (() => {
-              // 如果是关联字段，清空选项
-              if (configForm.type === 'relation') return undefined;
-              const dict = (configForm.dictRef && configForm.dictRef.tableId && configForm.dictRef.columnId) ? configForm.dictRef : undefined;
-              return dict ? undefined : (configForm.type === 'select' ? configForm.options.filter(o => o.trim()) : undefined);
+              // 如果有关联字段，清空选项
+              if (configForm.relation && configForm.relation.targetTableId && configForm.relation.targetColumnId) return undefined;
+              return configForm.type === 'select' ? configForm.options.filter(o => o.trim()) : undefined;
             })(),
             isMultiSelect: configForm.type === 'select' ? !!configForm.isMultiSelect : undefined,
-            dictRef: configForm.type === 'relation' ? undefined : ((configForm.dictRef && configForm.dictRef.tableId && configForm.dictRef.columnId) ? configForm.dictRef : undefined),
-            relation: configForm.type === 'relation' ? configForm.relation : undefined
+            dictRef: undefined, // 移除字典引用
+            relation: (configForm.relation && configForm.relation.targetTableId && configForm.relation.targetColumnId) ? {
+              ...configForm.relation,
+              targetTableName: allTables.find(t => t.id === configForm.relation?.targetTableId)?.name || '未知表格'
+            } : undefined
           }
         : col
     );
@@ -633,8 +634,8 @@ export function DataTable({
     const targetOldColumn = table.columns.find(c => c.id === configColumnId);
     const isSelectType = targetOldColumn?.type === 'select';
     const oldOptions: string[] = Array.isArray(targetOldColumn?.options) ? (targetOldColumn?.options as string[]) : [];
-    const hasValidDictRef = (configForm.type === 'select' && configForm.dictRef && configForm.dictRef.tableId && configForm.dictRef.columnId);
-    const newOptions: string[] = (configForm.type === 'select' && !hasValidDictRef) ? configForm.options.filter(o => o.trim()) : [];
+    const hasValidRelation = (configForm.type === 'select' && configForm.relation && configForm.relation.targetTableId && configForm.relation.targetColumnId);
+    const newOptions: string[] = (configForm.type === 'select' && !hasValidRelation) ? configForm.options.filter(o => o.trim()) : [];
 
     // 中文註釋：位置對齊映射（方案 A）——舊選項第 i 項映射到新選項第 i 項
     const renameMap: Record<string, string> = {};
@@ -3592,12 +3593,11 @@ export function DataTable({
                   <div className="flex items-center gap-2">
                     <Checkbox 
                       id="new-use-relation"
-                      checked={newColumn.type === 'relation'}
+                      checked={!!newColumn.relation}
                       onCheckedChange={(checked) => {
                         if (checked) {
                           setNewColumn({ 
                             ...newColumn, 
-                            type: 'relation',
                             relation: { 
                               targetTableId: newColumn.relation?.targetTableId || '', 
                               targetColumnId: newColumn.relation?.targetColumnId || '', 
@@ -3605,8 +3605,8 @@ export function DataTable({
                               type: newColumn.relation?.type || 'single'
                             } 
                           });
-                        } else if (newColumn.type === 'relation') {
-                          setNewColumn({ ...newColumn, type: 'text', relation: undefined });
+                        } else {
+                          setNewColumn({ ...newColumn, relation: undefined });
                         }
                       }}
                     />
@@ -3614,6 +3614,96 @@ export function DataTable({
                       <span className="font-medium">高級選項：</span> 關聯字段
                     </Label>
                   </div>
+                  {newColumn.relation && (
+                    <div className="mt-2 space-y-2">
+                      <div>
+                        <Label htmlFor="new-relation-table">關聯表</Label>
+                        <Select
+                          value={newColumn.relation.targetTableId}
+                          onValueChange={(value) => setNewColumn({ 
+                            ...newColumn, 
+                            relation: { 
+                              ...newColumn.relation,
+                              targetTableId: value,
+                              targetColumnId: '',
+                              displayColumnId: '',
+                              type: newColumn.relation?.type || 'single'
+                            } 
+                          })}
+                        >
+                          <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
+                            <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇關聯表'} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {allTables
+                              .filter(t => t.id !== table.id)
+                              .map((t) => (
+                                <SelectItem key={t.id} value={t.id}>{t.name || t.id}</SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {newColumn.relation.targetTableId && (
+                        <>
+                          <div>
+                            <Label htmlFor="new-relation-target-column">關聯列</Label>
+                            {(() => {
+                              const targetTable = allTables.find(t => t.id === newColumn.relation?.targetTableId);
+                              const targetCols = targetTable?.columns || [];
+                              return (
+                                <Select
+                                  value={newColumn.relation.targetColumnId}
+                                  onValueChange={(value) => setNewColumn({ 
+                                    ...newColumn, 
+                                    relation: { 
+                                      ...newColumn.relation,
+                                      targetColumnId: value,
+                                      displayColumnId: value,
+                                      targetTableId: newColumn.relation?.targetTableId || '',
+                                      type: newColumn.relation?.type || 'single'
+                                    } 
+                                  })}
+                                >
+                                  <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
+                                    <SelectValue placeholder="選擇關聯列" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {targetCols.map((c) => (
+                                      <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              );
+                            })()}
+                          </div>
+                          <div>
+                            <Label htmlFor="new-relation-type">關聯類型</Label>
+                            <Select
+                              value={newColumn.relation.type || 'single'}
+                              onValueChange={(value) => setNewColumn({ 
+                                ...newColumn, 
+                                relation: {
+                                  ...newColumn.relation,
+                                  targetTableId: newColumn.relation?.targetTableId || '',
+                                  targetColumnId: newColumn.relation?.targetColumnId || '',
+                                  displayColumnId: newColumn.relation?.displayColumnId || '',
+                                  type: value as 'single' | 'multiple'
+                                } 
+                              })}
+                            >
+                              <SelectTrigger className="mt-2">
+                                <SelectValue placeholder="選擇關聯類型" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="single">單選</SelectItem>
+                                <SelectItem value="multiple">多選</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <div className="flex items-center gap-2 mt-2">
@@ -3884,12 +3974,11 @@ export function DataTable({
                     <div className="flex items-center gap-2">
                       <Checkbox 
                         id="config-use-relation"
-                        checked={configForm.type === 'relation'}
+                        checked={!!configForm.relation}
                         onCheckedChange={(checked) => {
                           if (checked) {
                             setConfigForm({ 
                               ...configForm, 
-                              type: 'relation',
                               relation: { 
                                 targetTableId: configForm.relation?.targetTableId || '', 
                                 targetColumnId: configForm.relation?.targetColumnId || '', 
@@ -3897,8 +3986,8 @@ export function DataTable({
                                 type: configForm.relation?.type || 'single'
                               } 
                             });
-                          } else if (configForm.type === 'relation') {
-                            setConfigForm({ ...configForm, type: 'text', relation: undefined });
+                          } else {
+                            setConfigForm({ ...configForm, relation: undefined });
                           }
                         }}
                       />
@@ -3906,6 +3995,96 @@ export function DataTable({
                         <span className="font-medium">高級選項：</span> 關聯字段
                       </Label>
                     </div>
+                    {configForm.relation && (
+                      <div className="mt-2 space-y-2">
+                        <div>
+                          <Label htmlFor="config-relation-table">關聯表</Label>
+                          <Select
+                            value={configForm.relation.targetTableId}
+                            onValueChange={(value) => setConfigForm({ 
+                              ...configForm, 
+                              relation: { 
+                                ...configForm.relation,
+                                targetTableId: value,
+                                targetColumnId: '',
+                                displayColumnId: '',
+                                type: configForm.relation?.type || 'single'
+                              } 
+                            })}
+                          >
+                            <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
+                              <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇關聯表'} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {allTables
+                                .filter(t => t.id !== table.id)
+                                .map((t) => (
+                                  <SelectItem key={t.id} value={t.id}>{t.name || t.id}</SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {configForm.relation.targetTableId && (
+                          <>
+                            <div>
+                              <Label htmlFor="config-relation-target-column">關聯列</Label>
+                              {(() => {
+                                const targetTable = allTables.find(t => t.id === configForm.relation?.targetTableId);
+                                const targetCols = targetTable?.columns || [];
+                                return (
+                                  <Select
+                                    value={configForm.relation.targetColumnId}
+                                    onValueChange={(value) => setConfigForm({ 
+                                      ...configForm, 
+                                      relation: { 
+                                        ...configForm.relation,
+                                      targetColumnId: value,
+                                      displayColumnId: value,
+                                      targetTableId: configForm.relation?.targetTableId || '',
+                                      type: configForm.relation?.type || 'single'
+                                      } 
+                                    })}
+                                  >
+                                    <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
+                                      <SelectValue placeholder="選擇關聯列" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {targetCols.map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                );
+                              })()}
+                            </div>
+                            <div>
+                              <Label htmlFor="config-relation-type">關聯類型</Label>
+                              <Select
+                                value={configForm.relation.type || 'single'}
+                                onValueChange={(value) => setConfigForm({ 
+                                  ...configForm, 
+                                  relation: {
+                                    ...configForm.relation,
+                                    targetTableId: configForm.relation?.targetTableId || '',
+                                    targetColumnId: configForm.relation?.targetColumnId || '',
+                                    displayColumnId: configForm.relation?.displayColumnId || '',
+                                    type: value as 'single' | 'multiple'
+                                  } 
+                                })}
+                              >
+                                <SelectTrigger className="mt-2">
+                                  <SelectValue placeholder="選擇關聯類型" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="single">單選</SelectItem>
+                                  <SelectItem value="multiple">多選</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 {configForm.type === 'select' && (
                     <div>
@@ -4122,6 +4301,7 @@ export function DataTable({
                         onResizeStart={handleResizeStart}
                         resizingColumn={resizingColumn}
                         onOpenColumnConfig={openColumnConfig}
+                        allTables={allTables}
                       />
                     ))}
                   </SortableContext>
