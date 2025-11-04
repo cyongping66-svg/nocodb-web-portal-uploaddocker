@@ -3635,7 +3635,7 @@ export function DataTable({
                           value={newColumn.dictRef.tableId}
                           onValueChange={(value) => setNewColumn({ ...newColumn, dictRef: { tableId: value, columnId: '' } })}
                         >
-                          <SelectTrigger onClick={() => refreshAllTables()}>
+                          <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
                             <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇字典表'} />
                           </SelectTrigger>
                           <SelectContent>
@@ -3656,7 +3656,7 @@ export function DataTable({
                               value={newColumn.dictRef.columnId}
                               onValueChange={(value) => setNewColumn({ ...newColumn, dictRef: { tableId: newColumn.dictRef?.tableId || '', columnId: value } })}
                             >
-                              <SelectTrigger onClick={() => refreshAllTables()}>
+                              <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
                                 <SelectValue placeholder={sameTypeCols.length === 0 ? '請先選擇字典表' : '選擇同類型字典列'} />
                               </SelectTrigger>
                               <SelectContent>
@@ -3730,7 +3730,7 @@ export function DataTable({
                           } 
                         })}
                       >
-                        <SelectTrigger onClick={() => refreshAllTables()}>
+                        <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
                           <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇目標表格'} />
                         </SelectTrigger>
                         <SelectContent>
@@ -3763,7 +3763,7 @@ export function DataTable({
                                   } 
                                 })}
                               >
-                                <SelectTrigger onClick={() => refreshAllTables()}>
+                                <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
                                   <SelectValue placeholder={targetCols.length === 0 ? '請先選擇目標表格' : '選擇關聯字段'} />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -3795,7 +3795,7 @@ export function DataTable({
                                     } 
                                   })}
                                 >
-                                  <SelectTrigger onClick={() => refreshAllTables()}>
+                                  <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
                                     <SelectValue placeholder={targetCols.length === 0 ? '請先選擇目標表格' : '選擇顯示字段'} />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -3822,7 +3822,7 @@ export function DataTable({
                               } 
                             })}
                           >
-                            <SelectTrigger>
+                            <SelectTrigger className="mt-2">
                               <SelectValue placeholder="選擇關聯類型" />
                             </SelectTrigger>
                             <SelectContent>
@@ -3937,7 +3937,7 @@ export function DataTable({
                               value={configForm.dictRef.tableId}
                               onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: value, columnId: '' } })}
                             >
-                              <SelectTrigger onClick={() => refreshAllTables()}>
+                              <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
                                 <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇字典表'} />
                               </SelectTrigger>
                               <SelectContent>
@@ -3962,7 +3962,7 @@ export function DataTable({
                                 });
                               }}
                             >
-                              <SelectTrigger onClick={() => refreshAllTables()}>
+                              <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
                                 <SelectValue placeholder="選擇字典列" />
                               </SelectTrigger>
                               <SelectContent>
@@ -4027,7 +4027,7 @@ export function DataTable({
                               value={configForm.dictRef.tableId}
                               onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: value, columnId: '' } })}
                             >
-                              <SelectTrigger onClick={() => refreshAllTables()}>
+                              <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
                               <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇字典表'} />
                             </SelectTrigger>
                               <SelectContent>
@@ -4047,7 +4047,7 @@ export function DataTable({
                                   value={configForm.dictRef.columnId}
                                   onValueChange={(value) => setConfigForm({ ...configForm, dictRef: { tableId: configForm.dictRef?.tableId || '', columnId: value } })}
                                 >
-                                  <SelectTrigger onClick={() => refreshAllTables()}>
+                                  <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
                                     <SelectValue placeholder={dictCols.length === 0 ? '請先選擇字典表' : '選擇字典列'} />
                                   </SelectTrigger>
                                   <SelectContent>
