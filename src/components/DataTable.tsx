@@ -621,7 +621,7 @@ export function DataTable({
               return configForm.type === 'select' ? configForm.options.filter(o => o.trim()) : undefined;
             })(),
             isMultiSelect: configForm.type === 'select' ? !!configForm.isMultiSelect : undefined,
-            dictRef: undefined, // 移除字典引用
+            dictRef: configForm.dictRef, // 保留字典引用
             relation: (configForm.relation && configForm.relation.targetTableId && configForm.relation.targetColumnId) ? {
               ...configForm.relation,
               targetTableName: allTables.find(t => t.id === configForm.relation?.targetTableId)?.name || '未知表格'
@@ -3676,30 +3676,6 @@ export function DataTable({
                               );
                             })()}
                           </div>
-                          <div>
-                            <Label htmlFor="new-relation-type">關聯類型</Label>
-                            <Select
-                              value={newColumn.relation.type || 'single'}
-                              onValueChange={(value) => setNewColumn({ 
-                                ...newColumn, 
-                                relation: {
-                                  ...newColumn.relation,
-                                  targetTableId: newColumn.relation?.targetTableId || '',
-                                  targetColumnId: newColumn.relation?.targetColumnId || '',
-                                  displayColumnId: newColumn.relation?.displayColumnId || '',
-                                  type: value as 'single' | 'multiple'
-                                } 
-                              })}
-                            >
-                              <SelectTrigger className="mt-2">
-                                <SelectValue placeholder="選擇關聯類型" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="single">單選</SelectItem>
-                                <SelectItem value="multiple">多選</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
                         </>
                       )}
                     </div>
@@ -4056,30 +4032,6 @@ export function DataTable({
                                   </Select>
                                 );
                               })()}
-                            </div>
-                            <div>
-                              <Label htmlFor="config-relation-type">關聯類型</Label>
-                              <Select
-                                value={configForm.relation.type || 'single'}
-                                onValueChange={(value) => setConfigForm({ 
-                                  ...configForm, 
-                                  relation: {
-                                    ...configForm.relation,
-                                    targetTableId: configForm.relation?.targetTableId || '',
-                                    targetColumnId: configForm.relation?.targetColumnId || '',
-                                    displayColumnId: configForm.relation?.displayColumnId || '',
-                                    type: value as 'single' | 'multiple'
-                                  } 
-                                })}
-                              >
-                                <SelectTrigger className="mt-2">
-                                  <SelectValue placeholder="選擇關聯類型" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="single">單選</SelectItem>
-                                  <SelectItem value="multiple">多選</SelectItem>
-                                </SelectContent>
-                              </Select>
                             </div>
                           </>
                         )}
