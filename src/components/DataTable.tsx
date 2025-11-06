@@ -79,9 +79,10 @@ interface SortableHeaderProps {
   resizingColumn: string | null;
   onOpenColumnConfig: (columnId: string) => void;
   allTables: any[];
+  table: Table; // 添加table参数
 }
 
-function SortableHeader({ column, sortConfig, onSort, onDelete, columnWidth, onResizeStart, resizingColumn, onOpenColumnConfig, allTables }: SortableHeaderProps) {
+function SortableHeader({ column, sortConfig, onSort, onDelete, columnWidth, onResizeStart, resizingColumn, onOpenColumnConfig, allTables, table }: SortableHeaderProps) {
 
 
   const {
@@ -128,60 +129,127 @@ function SortableHeader({ column, sortConfig, onSort, onDelete, columnWidth, onR
           </button>
           
           <div className="flex items-center gap-1">
-            <div className="flex items-center gap-1">
-                <div>
-                  <span 
-                    className="px-1 py-0.5 rounded text-sm font-medium text-foreground whitespace-nowrap"
-                    title={column.name}
-                  >
-                    {column.name}
-                  </span>
-                  {column.relation?.targetTableId && (
-                    <span className="text-xs text-muted-foreground block mt-0.5">
-                      關聯表: {allTables.find(t => t.id === column.relation?.targetTableId)?.name || '未知表格'}
-                    </span>
-                  )}
-                </div>
-              <button
-                className="flex items-center justify-center w-5 h-5 text-xs text-muted-foreground hover:text-primary hover:bg-muted/50 rounded transition-colors"
-                onClick={() => onSort(column.id)}
-                title={
-                  sortConfig?.key === column.id 
-                    ? `當前排序：${sortConfig.direction === 'asc' ? '升序' : '降序'}，點擊切換` 
-                    : '點擊排序'
-                }
-              >
-                {sortConfig?.key === column.id ? (
-                  sortConfig.direction === 'asc' ? (
-                    <ArrowUp className="w-3 h-3" />
-                  ) : (
-                    <ArrowDown className="w-3 h-3" />
+            <div className="inline-flex items-center">
+              {(() => {
+                // 检查当前列是否是主关联列（有targetTableId）
+                const isSourceRelation = !!column.relation?.targetTableId;
+                
+                // 检查当前列是否被其他表关联（反向关联）
+                const isTargetRelation = allTables.some(otherTable => 
+                  otherTable.id !== table.id && 
+                  otherTable.columns?.some(otherColumn => 
+                    otherColumn.relation?.targetTableId === table.id && 
+                    otherColumn.relation?.targetColumnId === column.id
                   )
-                ) : (
-                  <div className="flex flex-col items-center gap-0">
-                    <ArrowUp className="w-2.5 h-2.5 opacity-40" />
-                    <ArrowDown className="w-2.5 h-2.5 opacity-40 -mt-0.5" />
-                  </div>
-                )}
-              </button>
+                );
+                
+                // 如果是关联列或被关联列，则显示图标
+                return (isSourceRelation || isTargetRelation) && (
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <div className="inline-flex items-center mr-1">
+                        <File className="w-4 h-4 text-primary cursor-help" />
+                    </div>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-60">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">关联信息</div>
+                      
+                      {/* 显示正向关联信息 */}
+                      {isSourceRelation && (
+                        <div className="space-y-1 pl-1">
+                          <div className="text-xs text-muted-foreground">
+                            关联表: {allTables.find(t => t.id === column.relation?.targetTableId)?.name || '未知表格'}
+                          </div>
+                          {column.relation?.targetColumnId && (
+                            <div className="text-xs text-muted-foreground">
+                              关联字段: {(() => {
+                                const targetTable = allTables.find(t => t.id === column.relation?.targetTableId);
+                                return targetTable?.columns?.find(c => c.id === column.relation?.targetColumnId)?.name || column.relation?.targetColumnId;
+                              })()}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* 显示反向关联信息 */}
+                      {isTargetRelation && (
+                        <div className="space-y-1 pl-1">
+                          <div className="text-xs text-muted-foreground font-medium">被以下表关联:</div>
+                          {allTables
+                            .filter(otherTable => 
+                              otherTable.id !== table.id && 
+                              otherTable.columns?.some(otherColumn => 
+                                otherColumn.relation?.targetTableId === table.id && 
+                                otherColumn.relation?.targetColumnId === column.id
+                              )
+                            )
+                            .map(relatedTable => {
+                              const relatedColumns = relatedTable.columns?.filter(otherColumn => 
+                                otherColumn.relation?.targetTableId === table.id && 
+                                otherColumn.relation?.targetColumnId === column.id
+                              );
+                              return (
+                                <div key={relatedTable.id} className="text-xs text-muted-foreground pl-2">
+                                  {relatedTable.name} (字段: {relatedColumns?.map(c => c.name).join(', ')})
+                                </div>
+                              );
+                            })}
+                        </div>
+                      )}
+                    </div>
+                  </PopoverContent>
+                  </Popover>
+                );
+              })()}
+              <span 
+                className="px-1 py-0.5 rounded text-sm font-medium text-foreground whitespace-nowrap"
+                title={column.name}
+              >
+                {column.name}
+              </span>
             </div>
             <button
-              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded"
-              onClick={(e) => { e.stopPropagation(); onOpenColumnConfig(column.id); }}
-              title="欄位設定"
+              className="flex items-center justify-center w-5 h-5 text-xs text-muted-foreground hover:text-primary hover:bg-muted/50 rounded transition-colors"
+              onClick={() => onSort(column.id)}
+              title={
+                sortConfig?.key === column.id 
+                  ? `當前排序：${sortConfig.direction === 'asc' ? '升序' : '降序'}，點擊切換` 
+                  : '點擊排序'
+              }
             >
-              <Settings className="w-3 h-3 text-muted-foreground" />
-            </button>
-            <button
-              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded"
-              onClick={(e) => { e.stopPropagation(); onDelete(column.id); }}
-              title="刪除欄位"
-            >
-              <Trash2 className="w-3 h-3 text-muted-foreground" />
+              {sortConfig?.key === column.id ? (
+                sortConfig.direction === 'asc' ? (
+                  <ArrowUp className="w-3 h-3" />
+                ) : (
+                  <ArrowDown className="w-3 h-3" />
+                )
+              ) : (
+                <div className="flex flex-col items-center gap-0">
+                  <ArrowUp className="w-2.5 h-2.5 opacity-40" />
+                  <ArrowDown className="w-2.5 h-2.5 opacity-40 -mt-0.5" />
+                </div>
+              )}
             </button>
           </div>
-          </div>
-        {/* 刪除按鈕已移至與編輯、設定同一樣式區塊 */}
+        </div>
+        
+        <div className="flex items-center gap-1">
+          <button
+            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded"
+            onClick={(e) => { e.stopPropagation(); onOpenColumnConfig(column.id); }}
+            title="欄位設定"
+          >
+            <Settings className="w-3 h-3 text-muted-foreground" />
+          </button>
+          <button
+            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded"
+            onClick={(e) => { e.stopPropagation(); onDelete(column.id); }}
+            title="刪除欄位"
+          >
+            <Trash2 className="w-3 h-3 text-muted-foreground" />
+          </button>
+        </div>
       </div>
       
       {/* 可拖拽的調整邊框 */}
@@ -589,13 +657,21 @@ export function DataTable({
     const col = table.columns.find(c => c.id === columnId);
     if (!col) return;
     setConfigColumnId(columnId);
+    // 确保relation对象结构完整，包含所有必要字段
+    const relationConfig = col.relation ? {
+      targetTableId: col.relation.targetTableId || '',
+      targetColumnId: col.relation.targetColumnId || '',
+      displayColumnId: col.relation.displayColumnId || (col.relation.targetColumnId || ''),
+      type: col.relation.type || 'single'
+    } : undefined;
+    
     setConfigForm({
       name: col.name,
       type: col.type,
       options: col.options ? [...col.options] : [''],
       isMultiSelect: !!col.isMultiSelect,
       dictRef: col.dictRef,
-      relation: col.relation
+      relation: relationConfig
     });
   };
 
@@ -606,6 +682,25 @@ export function DataTable({
     if (configForm.relation && configForm.relation.targetTableId === table.id) {
       toast.error('不允許關聯至自身表格');
       return;
+    }
+    
+    // 验证字段类型和名称匹配
+    if (configForm.relation && configForm.relation.targetTableId && configForm.relation.targetColumnId) {
+      const currentColumn = table.columns.find(c => c.id === configColumnId);
+      const targetTable = allTables.find(t => t.id === configForm.relation?.targetTableId);
+      const targetColumn = targetTable?.columns.find(c => c.id === configForm.relation?.targetColumnId);
+      const currentTypeName = configForm.name.trim() || currentColumn?.name;
+      
+      if (currentColumn && targetColumn) {
+        if (currentColumn.type !== targetColumn.type) {
+          toast.error('只能关联相同类型的字段');
+          return;
+        }
+        if (targetColumn.name !== currentTypeName) {
+          toast.error('只能关联相同名称的字段');
+          return;
+        }
+      }
     }
 
     // 先構造更新後的欄位定義
@@ -624,7 +719,11 @@ export function DataTable({
             dictRef: configForm.dictRef, // 保留字典引用
             relation: (configForm.relation && configForm.relation.targetTableId && configForm.relation.targetColumnId) ? {
               ...configForm.relation,
-              targetTableName: allTables.find(t => t.id === configForm.relation?.targetTableId)?.name || '未知表格'
+              targetTableId: configForm.relation.targetTableId,
+              targetColumnId: configForm.relation.targetColumnId,
+              displayColumnId: configForm.relation.displayColumnId || configForm.relation.targetColumnId,
+              targetTableName: allTables.find(t => t.id === configForm.relation?.targetTableId)?.name || '未知表格',
+              type: configForm.relation.type || 'single'
             } : undefined
           }
         : col
@@ -790,6 +889,60 @@ export function DataTable({
       return;
     }
 
+    // 中文註釋：添加单步操作双向关联功能 - 用户只需在一个表中创建关联字段，系统自动在目标表中创建反向关联字段，无需手动操作两次
+    if (configForm.relation && configForm.relation.targetTableId && configForm.relation.targetColumnId) {
+      try {
+        // 找到目标表
+        const targetTable = allTables.find(t => t.id === configForm.relation?.targetTableId);
+        if (targetTable) {
+          // 创建反向关联字段名
+          const reverseRelationColumnName = `${table.name}_反向关联`;
+          
+          // 检查目标表中是否已存在相同名称的字段
+          const existingColumn = targetTable.columns.find(col => col.name === reverseRelationColumnName);
+          
+          if (!existingColumn) {
+            // 为目标表创建新的关联字段
+            const newReverseColumn = {
+              id: `col_${Date.now()}`, // 生成临时ID
+              name: reverseRelationColumnName,
+              type: 'select',
+              options: undefined,
+              isMultiSelect: false,
+              dictRef: undefined,
+              relation: {
+                targetTableId: table.id,
+                targetColumnId: configColumnId,
+                displayColumnId: configColumnId,
+                targetTableName: table.name,
+                type: 'single'
+              }
+            };
+            
+            // 复制目标表并添加新列
+            const updatedTargetTable = {
+              ...targetTable,
+              columns: [...targetTable.columns, newReverseColumn]
+            };
+            
+            // 调用后端API更新目标表
+            // 分离表格结构和行数据
+            const { rows, ...tableStructure } = updatedTargetTable;
+            await apiService.updateTable(updatedTargetTable.id, tableStructure);
+            
+            // 重新获取所有表，确保UI更新
+            const updatedTables = await apiService.getTables();
+            setAllTables(Array.isArray(updatedTables) ? updatedTables : []);
+            
+            toast.success(`已在表「${targetTable.name}」中自动创建反向关联字段，双向关联已完成`);
+          }
+        }
+      } catch (e) {
+        console.error('创建反向关联失败:', e);
+        // 仅记录错误，不影响主流程
+      }
+    }
+    
     // 中文註釋：收尾與提示
     setConfigColumnId(null);
     setConfigForm(null);
@@ -817,7 +970,7 @@ export function DataTable({
   // 幫手：取得當前視圖中的行序號（1 起算）；若被篩掉則回退以原始 rows 順序
   const getDisplayedRowIndex = (rowId: string) => {
     try {
-      const filteredRows = table.rows.filter(row => {
+      const filteredRows = (table.rows || []).filter(row => {
         // 搜尋篩選
         if (searchTerm) {
           const searchMatch = Object.values(row).some(value => {
@@ -1219,14 +1372,35 @@ export function DataTable({
       return;
     }
 
+    // 检查关联字段配置是否有效并验证字段名称和类型匹配
+    const validRelation = newColumn.relation && newColumn.relation.targetTableId && newColumn.relation.targetColumnId;
+    
+    // 如果配置了关联字段，验证字段名称和类型是否匹配
+    if (validRelation) {
+      const targetTable = allTables.find(t => t.id === newColumn.relation!.targetTableId);
+      const targetColumn = targetTable?.columns.find(c => c.id === newColumn.relation!.targetColumnId);
+      
+      if (targetColumn && (targetColumn.name !== newColumn.name || targetColumn.type !== newColumn.type)) {
+        toast.error('關聯字段名稱和類型必須與目標字段完全一致');
+        return;
+      }
+    }
+    
     const column: Column = {
       id: Date.now().toString(),
       name: newColumn.name.trim(),
       type: newColumn.type,
-      options: newColumn.type === 'select' && !newColumn.dictRef ? newColumn.options.filter(opt => opt.trim()) : undefined,
+      options: newColumn.type === 'select' && !newColumn.dictRef && !validRelation ? newColumn.options.filter(opt => opt.trim()) : undefined,
       // 添加isMultiSelect属性
       isMultiSelect: newColumn.type === 'select' ? newColumn.isMultiSelect : undefined,
-      dictRef: newColumn.dictRef
+      dictRef: newColumn.dictRef,
+      // 添加relation属性，确保只有在配置有效的情况下才添加
+      relation: validRelation && newColumn.relation ? {
+        targetTableId: newColumn.relation.targetTableId,
+        targetColumnId: newColumn.relation.targetColumnId,
+        displayColumnId: newColumn.relation.displayColumnId || newColumn.relation.targetColumnId,
+        type: newColumn.relation.type || 'single'
+      } : undefined
     };
 
     // 本地更新：新增欄位
@@ -1255,8 +1429,8 @@ export function DataTable({
       }
     });
 
-    // 添加isMultiSelect属性，修复类型错误
-    setNewColumn({ name: '', type: 'text', options: [''], isMultiSelect: false, dictRef: undefined });
+    // 重置新增字段表单，包括relation属性
+    setNewColumn({ name: '', type: 'text', options: [''], isMultiSelect: false, dictRef: undefined, relation: undefined });
     setIsAddColumnOpen(false);
     toast.success('欄位新增成功');
   };
@@ -3590,33 +3764,34 @@ export function DataTable({
                 
                 {/* 高級選項：關聯字段 */}
                 <div className="border-t pt-4 border-gray-200">
-                  <div className="flex items-center gap-2">
-                    <Checkbox 
-                      id="new-use-relation"
-                      checked={!!newColumn.relation}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          setNewColumn({ 
-                            ...newColumn, 
-                            relation: { 
-                              targetTableId: newColumn.relation?.targetTableId || '', 
-                              targetColumnId: newColumn.relation?.targetColumnId || '', 
-                              displayColumnId: newColumn.relation?.displayColumnId || '',
-                              type: newColumn.relation?.type || 'single'
-                            } 
-                          });
-                        } else {
-                          setNewColumn({ ...newColumn, relation: undefined });
-                        }
-                      }}
-                    />
-                    <Label htmlFor="new-use-relation" className="cursor-pointer text-gray-700">
-                      <span className="font-medium">高級選項：</span> 關聯字段
-                    </Label>
-                  </div>
-                  {newColumn.relation && (
-                    <div className="mt-2 space-y-2">
-                      <div>
+                  <div className="p-4 bg-primary/5 rounded-lg border border-primary/10">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Checkbox 
+                        id="new-use-relation"
+                        checked={!!newColumn.relation}
+                        onCheckedChange={(checked) => {
+                          if (checked) {
+                            setNewColumn({ 
+                              ...newColumn, 
+                              relation: { 
+                                targetTableId: newColumn.relation?.targetTableId || '', 
+                                targetColumnId: newColumn.relation?.targetColumnId || '', 
+                                displayColumnId: newColumn.relation?.displayColumnId || '',
+                                type: newColumn.relation?.type || 'single'
+                              } 
+                            });
+                          } else {
+                            setNewColumn({ ...newColumn, relation: undefined });
+                          }
+                        }}
+                      />
+                      <Label htmlFor="new-use-relation" className="cursor-pointer text-gray-700 font-medium">
+                        關聯字段
+                      </Label>
+                    </div>
+                    {newColumn.relation && (
+                      <div className="mt-2 space-y-2">
+                        <div>
                         <Label htmlFor="new-relation-table">關聯表</Label>
                         <Select
                           value={newColumn.relation.targetTableId}
@@ -3644,56 +3819,64 @@ export function DataTable({
                         </Select>
                       </div>
                       {newColumn.relation.targetTableId && (
-                        <>
-                          <div>
-                            <Label htmlFor="new-relation-target-column">關聯列</Label>
-                            {(() => {
-                              const targetTable = allTables.find(t => t.id === newColumn.relation?.targetTableId);
-                              const targetCols = targetTable?.columns || [];
-                              return (
-                                <Select
-                                  value={newColumn.relation.targetColumnId}
-                                  onValueChange={(value) => setNewColumn({ 
-                                    ...newColumn, 
-                                    relation: { 
-                                      ...newColumn.relation,
-                                      targetColumnId: value,
-                                      displayColumnId: value,
-                                      targetTableId: newColumn.relation?.targetTableId || '',
-                                      type: newColumn.relation?.type || 'single'
-                                    } 
-                                  })}
-                                >
-                                  <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
-                                    <SelectValue placeholder="選擇關聯列" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {targetCols.map((c) => (
-                                      <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              );
-                            })()}
-                          </div>
+                          <>
+                            <div>
+                              <Label htmlFor="new-relation-target-column">關聯字段</Label>
+                              {(() => {
+                                const targetTable = allTables.find(t => t.id === newColumn.relation?.targetTableId);
+                                // 只显示与当前字段类型相同的目标列
+                                const targetCols = targetTable?.columns.filter(c => c.type === newColumn.type) || [];
+                                return (
+                                  <Select
+                                    value={newColumn.relation.targetColumnId}
+                                    onValueChange={(value) => setNewColumn({ 
+                                      ...newColumn, 
+                                      relation: { 
+                                        ...newColumn.relation,
+                                        targetColumnId: value,
+                                        displayColumnId: value,
+                                        targetTableId: newColumn.relation?.targetTableId || '',
+                                        type: newColumn.relation?.type || 'single'
+                                      } 
+                                    })}
+                                  >
+                                    <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
+                                      <SelectValue placeholder={targetCols.length === 0 ? '没有相同类型的字段可选' : '選擇關聯字段'} />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {targetCols.length === 0 ? (
+                                        <div className="text-center py-2 text-gray-500 text-sm">没有找到与当前字段类型和名称相同的列</div>
+                                      ) : (
+                                        targetCols.map((c) => (
+                                          <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
+                                        ))
+                                      )}
+                                    </SelectContent>
+                                  </Select>
+                                );
+                              })()}
+                            </div>
                         </>
                       )}
                     </div>
                   )}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <Checkbox 
-                      id="new-use-dict"
-                      checked={!!newColumn.dictRef}
-                      onCheckedChange={(checked) => {
-                        const next = !!checked ? { tableId: newColumn.dictRef?.tableId || '', columnId: '' } : undefined;
-                        setNewColumn({ ...newColumn, dictRef: next });
-                      }}
-                    />
-                    <Label htmlFor="new-use-dict" className="cursor-pointer">使用字典子表</Label>
                   </div>
-                  {newColumn.dictRef && (
+                </div>
+                {/* 字典子表功能 */}
+                <div className="border-t pt-4 border-gray-200">
+                  <div className="p-4 bg-secondary/5 rounded-lg border border-secondary/10">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Checkbox 
+                        id="new-use-dict"
+                        checked={!!newColumn.dictRef}
+                        onCheckedChange={(checked) => {
+                          const next = !!checked ? { tableId: newColumn.dictRef?.tableId || '', columnId: '' } : undefined;
+                          setNewColumn({ ...newColumn, dictRef: next });
+                        }}
+                      />
+                      <Label htmlFor="new-use-dict" className="cursor-pointer font-medium">使用字典子表</Label>
+                    </div>
+                    {newColumn.dictRef && (
                     <div className="mt-2 space-y-2">
                       <div>
                         <Label htmlFor="new-dict-table">字典表</Label>
@@ -3809,38 +3992,44 @@ export function DataTable({
                       </Select>
                     </div>
                     {newColumn.relation?.targetTableId && (
-                      <>
-                        <div>
-                          <Label htmlFor="new-relation-column">關聯字段</Label>
-                          {(() => {
-                            const targetTable = allTables.find(t => t.id === newColumn.relation?.targetTableId);
-                            const targetCols: Column[] = targetTable?.columns || [];
-                            return (
-                              <Select
-                                value={newColumn.relation?.targetColumnId || ''}
-                                onValueChange={(value) => setNewColumn({ 
-                                  ...newColumn, 
-                                  relation: {
-                                    ...newColumn.relation,
-                                    targetTableId: newColumn.relation?.targetTableId || '',
-                                    targetColumnId: value,
-                                    displayColumnId: value, // 默認顯示字段與關聯字段相同
-                                    type: newColumn.relation?.type || 'single' // 确保type属性存在
-                                  } 
-                                })}
-                              >
-                                <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
-                                  <SelectValue placeholder={targetCols.length === 0 ? '請先選擇目標表格' : '選擇關聯字段'} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {targetCols.map((c) => (
-                                    <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            );
-                          })()}
-                        </div>
+                          <>
+                            <div>
+                              <Label htmlFor="new-relation-column">關聯字段</Label>
+                              {(() => {
+                                const targetTable = allTables.find(t => t.id === newColumn.relation?.targetTableId);
+                                // 只显示与当前字段类型相同且名称相同的目标列
+                                // 注意：对于关联字段，我们需要确保类型判断正确
+                                const targetCols: Column[] = targetTable?.columns.filter(c => c.type === newColumn.type && c.name === newColumn.name) || [];
+                                return (
+                                  <Select
+                                    value={newColumn.relation?.targetColumnId || ''}
+                                    onValueChange={(value) => setNewColumn({ 
+                                      ...newColumn, 
+                                      relation: {
+                                        ...newColumn.relation,
+                                        targetTableId: newColumn.relation?.targetTableId || '',
+                                        targetColumnId: value,
+                                        displayColumnId: value, // 默認顯示字段與關聯字段相同
+                                        type: newColumn.relation?.type || 'single' // 确保type属性存在
+                                      } 
+                                    })}
+                                  >
+                                    <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
+                                      <SelectValue placeholder={targetCols.length === 0 ? '没有相同类型和名称的字段可选' : '選擇關聯字段'} />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {targetCols.length === 0 ? (
+                                        <div className="text-center py-2 text-gray-500 text-sm">没有找到与当前字段类型和名称相同的列</div>
+                                      ) : (
+                                        targetCols.map((c) => (
+                                          <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
+                                        ))
+                                      )}
+                                    </SelectContent>
+                                  </Select>
+                                );
+                              })()}
+                            </div>
                         {newColumn.relation?.targetColumnId && (
                           <div>
                             <Label htmlFor="new-relation-display">顯示字段</Label>
@@ -3905,6 +4094,7 @@ export function DataTable({
                   新增欄位
                 </Button>
               </div>
+              </div>
             </DialogContent>
           </Dialog>
 
@@ -3947,32 +4137,33 @@ export function DataTable({
                   
                   {/* 高級選項：關聯字段 */}
                   <div className="border-t pt-4 border-gray-200">
-                    <div className="flex items-center gap-2">
-                      <Checkbox 
-                        id="config-use-relation"
-                        checked={!!configForm.relation}
-                        onCheckedChange={(checked) => {
-                          if (checked) {
-                            setConfigForm({ 
-                              ...configForm, 
-                              relation: { 
-                                targetTableId: configForm.relation?.targetTableId || '', 
-                                targetColumnId: configForm.relation?.targetColumnId || '', 
-                                displayColumnId: configForm.relation?.displayColumnId || '',
-                                type: configForm.relation?.type || 'single'
-                              } 
-                            });
-                          } else {
-                            setConfigForm({ ...configForm, relation: undefined });
-                          }
-                        }}
-                      />
-                      <Label htmlFor="config-use-relation" className="cursor-pointer text-gray-700">
-                        <span className="font-medium">高級選項：</span> 關聯字段
-                      </Label>
-                    </div>
-                    {configForm.relation && (
-                      <div className="mt-2 space-y-2">
+                    <div className="p-4 bg-primary/5 rounded-lg border border-primary/10">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Checkbox 
+                          id="config-use-relation"
+                          checked={!!configForm.relation}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setConfigForm({ 
+                                ...configForm, 
+                                relation: { 
+                                  targetTableId: configForm.relation?.targetTableId || '', 
+                                  targetColumnId: configForm.relation?.targetColumnId || '', 
+                                  displayColumnId: configForm.relation?.displayColumnId || '',
+                                  type: configForm.relation?.type || 'single'
+                                } 
+                              });
+                            } else {
+                              setConfigForm({ ...configForm, relation: undefined });
+                            }
+                          }}
+                        />
+                        <Label htmlFor="config-use-relation" className="cursor-pointer text-gray-700 font-medium">
+                          關聯字段
+                        </Label>
+                      </div>
+                      {configForm.relation && (
+                        <div className="mt-2 space-y-2">
                         <div>
                           <Label htmlFor="config-relation-table">關聯表</Label>
                           <Select
@@ -4003,10 +4194,16 @@ export function DataTable({
                         {configForm.relation.targetTableId && (
                           <>
                             <div>
-                              <Label htmlFor="config-relation-target-column">關聯列</Label>
+                              <Label htmlFor="config-relation-target-column">關聯字段</Label>
                               {(() => {
                                 const targetTable = allTables.find(t => t.id === configForm.relation?.targetTableId);
-                                const targetCols = targetTable?.columns || [];
+                                // 只显示与当前字段类型和名称都相同的目标列
+                                const currentColumn = table.columns.find(c => c.id === configColumnId);
+                                const currentTypeName = configForm.name.trim() || currentColumn?.name;
+                                const targetCols = targetTable?.columns.filter(col => 
+                                  (col.type === currentColumn?.type || col.type === configForm.type) && 
+                                  col.name === currentTypeName
+                                ) || [];
                                 return (
                                   <Select
                                     value={configForm.relation.targetColumnId}
@@ -4022,12 +4219,16 @@ export function DataTable({
                                     })}
                                   >
                                     <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
-                                      <SelectValue placeholder="選擇關聯列" />
+                                      <SelectValue placeholder={targetCols.length === 0 ? '没有相同类型的字段可选' : '選擇關聯字段'} />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      {targetCols.map((c) => (
-                                        <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
-                                      ))}
+                                      {targetCols.length === 0 ? (
+                                        <div className="text-center py-2 text-gray-500 text-sm">没有找到与当前字段类型相同的列</div>
+                                      ) : (
+                                        targetCols.map((c) => (
+                                          <SelectItem key={c.id} value={c.id}>{c.name || c.id}</SelectItem>
+                                        ))
+                                      )}
                                     </SelectContent>
                                   </Select>
                                 );
@@ -4038,6 +4239,7 @@ export function DataTable({
                       </div>
                     )}
                   </div>
+                </div>
                 {configForm.type === 'select' && (
                     <div>
                       <Label>選項</Label>
@@ -4138,18 +4340,19 @@ export function DataTable({
                     </div>
                   )}
                   {configForm.type !== 'select' && (
-                    <div>
-                      <div className="flex items-center gap-2 mt-2">
-                        <Checkbox
-                          id="config-use-dict"
-                          checked={!!configForm.dictRef}
-                          onCheckedChange={(checked) => {
-                            const next = !!checked ? { tableId: configForm.dictRef?.tableId || '', columnId: configForm.dictRef?.columnId || '' } : undefined;
-                            setConfigForm({ ...configForm, dictRef: next });
-                          }}
-                        />
-                        <Label htmlFor="config-use-dict" className="cursor-pointer">使用字典子表</Label>
-                      </div>
+                    <div className="border-t pt-4 border-gray-200">
+                      <div className="p-4 bg-secondary/5 rounded-lg border border-secondary/10">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Checkbox
+                            id="config-use-dict"
+                            checked={!!configForm.dictRef}
+                            onCheckedChange={(checked) => {
+                              const next = !!checked ? { tableId: configForm.dictRef?.tableId || '', columnId: configForm.dictRef?.columnId || '' } : undefined;
+                              setConfigForm({ ...configForm, dictRef: next });
+                            }}
+                          />
+                          <Label htmlFor="config-use-dict" className="cursor-pointer font-medium">使用字典子表</Label>
+                        </div>
                       {configForm.dictRef ? (
                         <div className="mt-2 space-y-2">
                           <div>
@@ -4194,6 +4397,7 @@ export function DataTable({
                           </div>
                         </div>
                       ) : null}
+                      </div>
                     </div>
                   )}
                   <div className="flex gap-2 pt-2">
@@ -4254,6 +4458,7 @@ export function DataTable({
                         resizingColumn={resizingColumn}
                         onOpenColumnConfig={openColumnConfig}
                         allTables={allTables}
+                        table={table}
                       />
                     ))}
                   </SortableContext>
