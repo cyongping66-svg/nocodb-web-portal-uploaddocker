@@ -962,23 +962,169 @@ export function DataTable({
   const [singleSelectDraft, setSingleSelectDraft] = useState<Record<string, string>>({});
   const [filters, setFilters] = useState<{ [columnId: string]: string }>({});
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [enableMultiTableQuery, setEnableMultiTableQuery] = useState(false);
+  
+  // 获取与当前行相关联的所有表的数据（包括被动关联）
+  const getRelatedTableDataByRow = (currentTableId: string, currentRowId: string): Array<{ table: Table; rows: Row[] }> => {
+    if (!allTables || !Array.isArray(allTables)) return [];
+    
+    const result: Array<{ table: Table; rows: Row[] }> = [];
+    
+    // 查找所有关联到当前表的其他表
+    for (const relatedTable of allTables) {
+      if (!relatedTable || !relatedTable.id || relatedTable.id === currentTableId) continue;
+      
+      // 查找该表中关联到当前表的列
+      const relationColumns = relatedTable.columns?.filter((col: Column) => 
+        col.relation && col.relation.targetTableId === currentTableId
+      ) || [];
+      
+      if (relationColumns.length > 0 && relatedTable.rows && Array.isArray(relatedTable.rows)) {
+        // 查找引用当前行的记录
+        const relatedRows = relatedTable.rows.filter((relatedRow: Row) => {
+          return relationColumns.some((col: Column) => {
+            const cellValue = relatedRow[col.id];
+            return cellValue === currentRowId || 
+                   (Array.isArray(cellValue) && cellValue.includes(currentRowId));
+          });
+        });
+        
+        if (relatedRows.length > 0) {
+          result.push({
+            table: relatedTable,
+            rows: relatedRows
+          });
+        }
+      }
+    }
+    
+    return result;
+  };
+  
+  // 格式化被动关联数据的显示
+  const formatPassiveRelationData = (relatedRow: any, targetTable: any): string => {
+    if (!relatedRow || !targetTable || !targetTable.columns) return '';
+    
+    // 找到显示列
+    const displayColumn = targetTable.columns.find((col: Column) => 
+      // 查找名称为name或title的列，或者第一个非关联列
+      col.name === 'name' || col.name === 'title' || !col.relation
+    ) || targetTable.columns[0];
+    
+    const displayValue = relatedRow[displayColumn?.id || 'id'] || '未知';
+    
+    // 添加其他重要字段
+    const otherFields = targetTable.columns
+      .filter((col: Column) => col.id !== displayColumn?.id && !col.relation)
+      .slice(0, 2)
+      .map((col: Column) => {
+        const val = relatedRow[col.id];
+        return val ? `${col.name}: ${val}` : '';
+      })
+      .filter(Boolean);
+    
+    return [displayValue, ...otherFields].join(', ');
+  };
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [isBatchEditOpen, setIsBatchEditOpen] = useState(false);
   const [batchEditColumn, setBatchEditColumn] = useState('');
   const [batchEditValue, setBatchEditValue] = useState('');
 
+  // 获取所有关联表数据的辅助函数
+  const getRelatedTableData = (tableId: string) => {
+    // 在实际应用中，这里应该通过API获取所有关联表的数据
+    // 由于是模拟环境，我们直接返回DataTable组件接收到的allTables数据
+    return allTables || [];
+  };
+  
+  // 递归查找关联数据的函数
+  const findRelatedData = (row: Row, relationCache: Record<string, any> = {}) => {
+    const result = { ...row };
+    
+    // 查找当前行中的关联字段
+    table.columns.forEach(column => {
+      if (column.relation && column.relation.targetTableId && column.relation.targetColumnId) {
+        const relatedValue = (row as any)[column.id];
+        const { targetTableId, targetColumnId } = column.relation;
+        if (relatedValue) {
+          const relatedTables = getRelatedTableData(targetTableId);
+          const relatedTable = relatedTables.find((t: any) => t.id === targetTableId);
+          
+          if (relatedTable && relatedTable.rows) {
+            const relatedRow = relatedTable.rows.find((r: any) => r[targetColumnId] === relatedValue);
+            if (relatedRow && !relationCache[`${relatedTable.id}_${relatedRow.id}`]) {
+              // 防止循环引用
+              relationCache[`${relatedTable.id}_${relatedRow.id}`] = true;
+              // 递归查找更深层次的关联数据
+              result[`${column.id}_related`] = findRelatedData(relatedRow, relationCache);
+            }
+          }
+        }
+      }
+    });
+    
+    return result;
+  };
+  
+  // 多表关联搜索的辅助函数
+  const searchInRelatedData = (row: Row, searchTerm: string) => {
+    // 先检查当前行是否匹配
+    const currentRowMatch = Object.values(row).some(value => {
+      if (value && typeof value === 'object' && (value as any).name) {
+        return String((value as any).name).toLowerCase().includes(searchTerm.toLowerCase());
+      }
+      return String(value || '').toLowerCase().includes(searchTerm.toLowerCase());
+    });
+    
+    if (currentRowMatch) return true;
+    
+    // 如果启用了多表关联查询，则检查关联表数据
+    if (enableMultiTableQuery) {
+      const relationCache: Record<string, any> = {};
+      const rowWithRelatedData = findRelatedData(row, relationCache);
+      
+      // 检查所有关联数据
+      const checkAllProperties = (obj: any): boolean => {
+        if (!obj || typeof obj !== 'object') return false;
+        
+        for (const key in obj) {
+          if (key.endsWith('_related')) {
+            // 检查关联数据的直接属性
+            for (const prop in obj[key]) {
+              if (prop !== 'id' && !prop.endsWith('_related')) {
+                const value = obj[key][prop];
+                if (value && typeof value === 'object' && (value as any).name) {
+                  if (String((value as any).name).toLowerCase().includes(searchTerm.toLowerCase())) {
+                    return true;
+                  }
+                }
+                if (String(value || '').toLowerCase().includes(searchTerm.toLowerCase())) {
+                  return true;
+                }
+              }
+            }
+            // 递归检查更深层次的关联数据
+            if (checkAllProperties(obj[key])) {
+              return true;
+            }
+          }
+        }
+        return false;
+      };
+      
+      return checkAllProperties(rowWithRelatedData);
+    }
+    
+    return false;
+  };
+  
   // 幫手：取得當前視圖中的行序號（1 起算）；若被篩掉則回退以原始 rows 順序
   const getDisplayedRowIndex = (rowId: string) => {
     try {
       const filteredRows = (table.rows || []).filter(row => {
         // 搜尋篩選
         if (searchTerm) {
-          const searchMatch = Object.values(row).some(value => {
-            if (value && typeof value === 'object' && (value as any).name) {
-              return String((value as any).name).toLowerCase().includes(searchTerm.toLowerCase());
-            }
-            return String(value || '').toLowerCase().includes(searchTerm.toLowerCase());
-          });
+          const searchMatch = searchInRelatedData(row, searchTerm);
           if (!searchMatch) return false;
         }
 
@@ -2686,6 +2832,47 @@ export function DataTable({
       return relationCache[cacheKey] || null;
     };
     
+    // 获取多级关联数据的辅助函数
+    const getRelatedTableData = (targetTableId: string) => {
+      return allTables.find(t => t.id === targetTableId);
+    };
+    
+    // 格式化多表关联数据的显示
+    const formatMultiTableData = (relatedData: any) => {
+      if (!relatedData || typeof relatedData !== 'object') return '';
+      
+      // 处理订单信息
+      if (relatedData.amount || relatedData.orderDate) {
+        let result = '';
+        if (relatedData.amount) result += `金額 ${relatedData.amount} 元`;
+        if (relatedData.orderDate) {
+          result += result ? `，日期 ${new Date(relatedData.orderDate).toLocaleDateString()}` : `日期 ${new Date(relatedData.orderDate).toLocaleDateString()}`;
+        }
+        // 处理嵌套的产品信息
+        if (relatedData.products && Array.isArray(relatedData.products) && relatedData.products.length > 0) {
+          result += `，產品：${relatedData.products.map((p: any) => p.name || '未知').join(', ')}`;
+        }
+        return result;
+      }
+      
+      // 处理产品信息
+      if (relatedData.name || relatedData.stock) {
+        let result = '';
+        if (relatedData.name) result += `${relatedData.name}`;
+        if (relatedData.stock !== undefined) {
+          result += result ? `，庫存 ${relatedData.stock} 台` : `庫存 ${relatedData.stock} 台`;
+        }
+        return result;
+      }
+      
+      // 默认处理
+      const values = Object.entries(relatedData)
+        .filter(([key, val]) => val !== null && val !== undefined && val !== '')
+        .map(([key, val]) => `${val}`)
+        .slice(0, 3); // 最多显示3个属性
+      return values.join(', ');
+    };
+    
     // 获取格式化的关联数据显示值
     const getFormattedRelationValue = () => {
       // 检查值是否已经是后端返回的格式化数据
@@ -2770,35 +2957,73 @@ export function DataTable({
         
         if (column.relation?.type === 'multiple') {
           // 多选模式
-          return (
-            <div className="flex flex-wrap gap-1 max-w-full">
-              {relationValues.length > 0 ? (
-                relationValues.map((val: any) => {
-                  // 检查是否是后端返回的格式化数据
-                  if (val && typeof val === 'object' && val.displayValue !== undefined) {
+        return (
+          <div className="max-w-full">
+            {relationValues.length > 0 ? (
+              relationValues.map((val: any) => {
+                // 检查是否是后端返回的格式化数据
+                if (val && typeof val === 'object' && val.displayValue !== undefined) {
+                  // 多表关联模式下显示更多信息
+                  if (enableMultiTableQuery && val.relatedData) {
                     return (
-                      <span key={val.id || val.value} className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary">
-                        {val.displayValue}
-                      </span>
+                      <div key={val.id || val.value} className="mb-2">
+                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary">
+                          {val.displayValue}
+                        </span>
+                        {val.relatedData.map((relatedItem: any, index: number) => (
+                          <div key={index} className="text-xs text-muted-foreground pl-4 border-l-2 border-primary/30">
+                            {formatMultiTableData(relatedItem)}
+                          </div>
+                        ))}
+                      </div>
                     );
                   }
-                  
-                  // 传统方式处理
-                  const relatedItem = relationData?.find((item: any) => 
-                    String(item[column.relation?.targetColumnId || 'id']) === String(val)
-                  );
-                  const displayText = relatedItem ? relatedItem[displayColumnId] : val;
-                  
                   return (
-                    <span key={val} className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary">
-                      {displayText || '未找到关联数据'}
+                    <span key={val.id || val.value} className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary m-1">
+                      {val.displayValue}
                     </span>
                   );
-                })
-              ) : (
-                <span className="text-sm text-muted-foreground italic">未設置</span>
-              )}
-            </div>
+                }
+                
+                // 传统方式处理
+                const relatedItem = relationData?.find((item: any) => 
+                  String(item[column.relation?.targetColumnId || 'id']) === String(val)
+                );
+                const displayText = relatedItem ? relatedItem[displayColumnId] : val;
+                
+                // 多表关联模式下显示更多信息
+                if (enableMultiTableQuery && relatedItem && Object.keys(relatedItem).length > 0) {
+                  const targetTable = getRelatedTableData(column.relation?.targetTableId || '');
+                  if (targetTable) {
+                    const relationColumns = targetTable.columns?.filter((col: Column) => 
+                      col.relation && col.relation.targetTableId
+                    ) || [];
+                    
+                    if (relationColumns.length > 0) {
+                      return (
+                        <div key={val} className="mb-2">
+                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary">
+                            {displayText || '未找到关联数据'}
+                          </span>
+                          <div className="text-xs text-muted-foreground pl-4 border-l-2 border-primary/30">
+                            {formatMultiTableData(relatedItem)}
+                          </div>
+                        </div>
+                      );
+                    }
+                  }
+                }
+                
+                return (
+                  <span key={val} className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary m-1">
+                    {displayText || '未找到关联数据'}
+                  </span>
+                );
+              })
+            ) : (
+              <span className="text-sm text-muted-foreground italic">未設置</span>
+            )}
+          </div>
           );
         } else {
           // 单选模式
@@ -2806,6 +3031,21 @@ export function DataTable({
           
           // 检查是否是后端返回的格式化数据
           if (val && typeof val === 'object' && val.displayValue !== undefined) {
+            // 多表关联模式下显示更多信息
+            if (enableMultiTableQuery && val.relatedData) {
+              return (
+                <div className="space-y-1">
+                  <span className="text-sm text-primary font-medium">
+                    {val.displayValue}
+                  </span>
+                  {val.relatedData.map((relatedItem: any, index: number) => (
+                    <div key={index} className="text-xs text-muted-foreground pl-2 border-l-2 border-primary/30">
+                      {formatMultiTableData(relatedItem)}
+                    </div>
+                  ))}
+                </div>
+              );
+            }
             return (
               <span className="text-sm text-primary">
                 {val.displayValue}
@@ -2819,6 +3059,33 @@ export function DataTable({
               String(item[column.relation?.targetColumnId || 'id']) === String(val)
             );
             const displayText = relatedItem ? relatedItem[displayColumnId] : val;
+            
+            // 多表关联模式下显示更多信息
+            if (enableMultiTableQuery && relatedItem && Object.keys(relatedItem).length > 0) {
+              // 尝试查找关联的第二级数据
+              const targetTable = getRelatedTableData(column.relation?.targetTableId || '');
+              if (targetTable) {
+                // 查找可能的关联字段
+                const relationColumns = targetTable.columns?.filter((col: Column) => 
+                  col.relation && col.relation.targetTableId
+                ) || [];
+                
+                // 检查是否有额外的关联数据
+                if (relationColumns.length > 0) {
+                  return (
+                    <div className="space-y-1">
+                      <span className="text-sm text-primary font-medium">
+                        {displayText || '未找到关联数据'}
+                      </span>
+                      {/* 显示关联数据的摘要信息 */}
+                      <div className="text-xs text-muted-foreground pl-2 border-l-2 border-primary/30">
+                        {formatMultiTableData(relatedItem)}
+                      </div>
+                    </div>
+                  );
+                }
+              }
+            }
             
             return (
               <span className="text-sm text-primary">
@@ -3202,12 +3469,47 @@ export function DataTable({
       }
     };
 
+    const passiveRelatedData = enableMultiTableQuery && !isEditing ? 
+      getRelatedTableDataByRow(table.id, row.id) : [];
+    
     return (
       <div
-        className="p-2 cursor-pointer hover:bg-muted/50 transition-colors min-h-[32px] flex items-center"
+        className="p-2 cursor-pointer hover:bg-muted/50 transition-colors min-h-[32px] flex flex-col items-start justify-start gap-1"
         onClick={() => startEdit(row.id, column.id, column.type === 'file' ? '' : value)}
       >
-        {renderCellContent()}
+        <div>{renderCellContent()}</div>
+        
+        {/* 显示被动关联数据 */}
+        {passiveRelatedData.length > 0 && !isEditing && (
+          <div className="w-full mt-1 pt-1 border-t border-dashed border-muted/50">
+            {passiveRelatedData.map((relatedData: any, tableIndex: number) => {
+              const displayRows = relatedData.rows.slice(0, 5); // 最多显示5条
+              const hasMore = relatedData.rows.length > 5;
+              
+              return (
+                <div key={tableIndex} className="mt-1">
+                  <div className="text-xs font-medium text-muted-foreground flex items-center">
+                    <span>{relatedData.table.name || relatedData.table.id}</span>
+                    <span className="mx-1">:</span>
+                    <span className="text-xs text-muted">共 {relatedData.rows.length} 筆</span>
+                  </div>
+                  <div className="mt-1 pl-2">
+                    {displayRows.map((relatedRow: any, rowIndex: number) => (
+                      <div key={rowIndex} className="text-xs text-muted-foreground mb-1">
+                        {formatPassiveRelationData(relatedRow, relatedData.table)}
+                      </div>
+                    ))}
+                    {hasMore && (
+                      <div className="text-xs text-muted-foreground italic">
+                        ... 還有 {relatedData.rows.length - 5} 筆未顯示
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   };
@@ -3265,6 +3567,22 @@ export function DataTable({
                   進階篩選
                 </DialogTitle>
               </DialogHeader>
+              {/* 多表关联查询切换 */}
+              <div className="border-b border-border p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ArrowRightLeft className="w-4 h-4 text-primary" />
+                    <span className="text-sm font-medium">多表关联查询</span>
+                  </div>
+                  <Checkbox 
+                    checked={enableMultiTableQuery}
+                    onCheckedChange={(checked) => setEnableMultiTableQuery(checked as boolean)}
+                  />
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  启用后，搜索时将自动关联查询所有相关表的数据
+                </p>
+              </div>
               <div className="flex-1 overflow-y-auto px-1">
                 <div className="space-y-6 py-4">
                 {table.columns.map((column) => (

@@ -327,12 +327,54 @@ export function useTables() {
       // 调用API创建新行
       await apiService.createRow(tableId, rowData)
       
-      // 重新加載該表格的數據（後端已按 row_orders 排序，未設置的追加末尾）
-      const rows = await apiService.getTableRows(tableId)
+      // 查找所有与当前表相关联的表格ID
+      const relatedTableIds = new Set<string>();
+      
+      // 查找以当前表为目标表的关联（其他表关联到当前表）
+      tables.forEach(otherTable => {
+        if (otherTable.id !== tableId && otherTable.columns) {
+          const hasRelation = otherTable.columns.some(col => 
+            col.relation?.targetTableId === tableId
+          );
+          if (hasRelation) {
+            relatedTableIds.add(otherTable.id);
+          }
+        }
+      });
+      
+      // 查找当前表关联到的其他表
+      const table = tables.find(t => t.id === tableId);
+      if (table?.columns) {
+        table.columns.forEach(col => {
+          if (col.relation?.targetTableId && col.relation.targetTableId !== tableId) {
+            relatedTableIds.add(col.relation.targetTableId);
+          }
+        });
+      }
+      
+      // 确保包含当前表ID
+      relatedTableIds.add(tableId);
+      
+      // 并行加载所有相关表的数据以提高性能
+      const loadPromises = Array.from(relatedTableIds).map(id => 
+        apiService.getTableRows(id)
+      );
+      
+      const results = await Promise.all(loadPromises);
+      const tableDataMap = new Map<string, any[]>();
+      
+      Array.from(relatedTableIds).forEach((id, index) => {
+        tableDataMap.set(id, results[index] || []);
+      });
+      
+      // 更新所有相关表格的数据
       setTablesState(prev => 
-        prev.map(table => 
-          table.id === tableId ? { ...table, rows: rows || [] } : table
-        )
+        prev.map(table => {
+          if (tableDataMap.has(table.id)) {
+            return { ...table, rows: tableDataMap.get(table.id)! };
+          }
+          return table;
+        })
       )
       
       return { success: true, rowId: rowData.id } // 返回成功标志和行ID
@@ -364,12 +406,53 @@ export function useTables() {
       // 调用API更新数据
       await apiService.updateRow(tableId, rowId, updatedRowData)
       
-      // 重新加載該表格的數據（後端已按 row_orders 排序）
-      const rows = await apiService.getTableRows(tableId)
+      // 查找所有与当前表相关联的表格ID
+      const relatedTableIds = new Set<string>();
+      
+      // 查找以当前表为目标表的关联（其他表关联到当前表）
+      tables.forEach(otherTable => {
+        if (otherTable.id !== tableId && otherTable.columns) {
+          const hasRelation = otherTable.columns.some(col => 
+            col.relation?.targetTableId === tableId
+          );
+          if (hasRelation) {
+            relatedTableIds.add(otherTable.id);
+          }
+        }
+      });
+      
+      // 查找当前表关联到的其他表
+      if (table?.columns) {
+        table.columns.forEach(col => {
+          if (col.relation?.targetTableId && col.relation.targetTableId !== tableId) {
+            relatedTableIds.add(col.relation.targetTableId);
+          }
+        });
+      }
+      
+      // 确保包含当前表ID
+      relatedTableIds.add(tableId);
+      
+      // 并行加载所有相关表的数据以提高性能
+      const loadPromises = Array.from(relatedTableIds).map(id => 
+        apiService.getTableRows(id)
+      );
+      
+      const results = await Promise.all(loadPromises);
+      const tableDataMap = new Map<string, any[]>();
+      
+      Array.from(relatedTableIds).forEach((id, index) => {
+        tableDataMap.set(id, results[index] || []);
+      });
+      
+      // 更新所有相关表格的数据
       setTablesState(prev => 
-        prev.map(table => 
-          table.id === tableId ? { ...table, rows: rows || [] } : table
-        )
+        prev.map(table => {
+          if (tableDataMap.has(table.id)) {
+            return { ...table, rows: tableDataMap.get(table.id)! };
+          }
+          return table;
+        })
       )
       
       return { success: true } // 返回成功标志
@@ -389,12 +472,54 @@ export function useTables() {
       // 调用API删除行
       await apiService.deleteRow(tableId, rowId)
       
-      // 重新加載該表格的數據（後端已按 row_orders 排序）
-      const rows = await apiService.getTableRows(tableId)
+      // 查找所有与当前表相关联的表格ID
+      const relatedTableIds = new Set<string>();
+      
+      // 查找以当前表为目标表的关联（其他表关联到当前表）
+      tables.forEach(otherTable => {
+        if (otherTable.id !== tableId && otherTable.columns) {
+          const hasRelation = otherTable.columns.some(col => 
+            col.relation?.targetTableId === tableId
+          );
+          if (hasRelation) {
+            relatedTableIds.add(otherTable.id);
+          }
+        }
+      });
+      
+      // 查找当前表关联到的其他表
+      const table = tables.find(t => t.id === tableId);
+      if (table?.columns) {
+        table.columns.forEach(col => {
+          if (col.relation?.targetTableId && col.relation.targetTableId !== tableId) {
+            relatedTableIds.add(col.relation.targetTableId);
+          }
+        });
+      }
+      
+      // 确保包含当前表ID
+      relatedTableIds.add(tableId);
+      
+      // 并行加载所有相关表的数据以提高性能
+      const loadPromises = Array.from(relatedTableIds).map(id => 
+        apiService.getTableRows(id)
+      );
+      
+      const results = await Promise.all(loadPromises);
+      const tableDataMap = new Map<string, any[]>();
+      
+      Array.from(relatedTableIds).forEach((id, index) => {
+        tableDataMap.set(id, results[index] || []);
+      });
+      
+      // 更新所有相关表格的数据
       setTablesState(prev => 
-        prev.map(table => 
-          table.id === tableId ? { ...table, rows: rows || [] } : table
-        )
+        prev.map(table => {
+          if (tableDataMap.has(table.id)) {
+            return { ...table, rows: tableDataMap.get(table.id)! };
+          }
+          return table;
+        })
       )
       
       toast.success('數據已刪除')
