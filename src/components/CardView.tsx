@@ -801,7 +801,7 @@ export function CardView({ table, onUpdateTable: originalOnUpdateTable, onSetLas
         if (!value) return <span className="text-sm text-muted-foreground">無連結</span>;
         return (
           <div className="flex items-center gap-2 text-sm">
-            <Link className="w-4 h-4 text-blue-500" />
+            <Link className="w-4 h-4 text-primary cursor-help" />
             <a 
               href={value.startsWith('http') ? value : `https://${value}`}
               target="_blank" 
