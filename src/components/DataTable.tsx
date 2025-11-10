@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuItem, DropdownMenuCheckboxItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Plus, Edit, Trash2, ArrowUp, ArrowDown, GripVertical, Link, File, Mail, Phone, Search, Filter, X, CheckSquare, Square, Download, Copy, Settings, RotateCcw, ArrowRightLeft } from 'lucide-react';
@@ -1066,6 +1066,65 @@ export function DataTable({
     return result;
   };
   
+  // 控制关联详情弹窗的状态
+  const [showRelationDetail, setShowRelationDetail] = useState(false);
+  const [selectedRelationData, setSelectedRelationData] = useState<any>(null);
+  const [relationDataTitle, setRelationDataTitle] = useState('');
+  
+  // 处理关联信息点击事件
+  const handleRelationClick = (data: any, title: string) => {
+    setSelectedRelationData(data);
+    setRelationDataTitle(title);
+    setShowRelationDetail(true);
+  };
+  
+  // 递归渲染关联数据详情
+  const renderRelationDetail = (data: any, level = 0) => {
+    if (!data || typeof data !== 'object') return null;
+    
+    const indent = level * 20;
+    
+    return Object.entries(data).map(([key, value]) => {
+      // 跳过内部关联标识
+      if (key.endsWith('_related')) return null;
+      
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        return (
+          <div key={key} className="mb-2">
+            <div className="font-medium text-sm" style={{ marginLeft: `${indent}px` }}>
+              {key}:
+            </div>
+            {renderRelationDetail(value, level + 1)}
+          </div>
+        );
+      } else if (Array.isArray(value)) {
+        return (
+          <div key={key} className="mb-2">
+            <div className="font-medium text-sm" style={{ marginLeft: `${indent}px` }}>
+              {key}:
+            </div>
+            {value.map((item, index) => (
+              <div key={index} className="ml-4 mb-1">
+                {typeof item === 'object' && item !== null ? (
+                  renderRelationDetail(item, level + 1)
+                ) : (
+                  <div style={{ marginLeft: `${indent + 20}px` }}>{String(item)}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      }
+      
+      return (
+        <div key={key} className="flex text-sm" style={{ marginLeft: `${indent}px` }}>
+          <div className="w-24 text-gray-500">{key}:</div>
+          <div>{value !== undefined ? String(value) : '未设置'}</div>
+        </div>
+      );
+    });
+  };
+
   // 多表关联搜索的辅助函数
   const searchInRelatedData = (row: Row, searchTerm: string) => {
     // 先检查当前行是否匹配
@@ -2964,17 +3023,59 @@ export function DataTable({
                 // 检查是否是后端返回的格式化数据
                 if (val && typeof val === 'object' && val.displayValue !== undefined) {
                   // 多表关联模式下显示更多信息
-                  if (enableMultiTableQuery && val.relatedData) {
+                  if (enableMultiTableQuery) {
+                    // 获取被动关联数据
+                    const passiveRelatedData = getRelatedTableDataByRow(row.id);
+                    
                     return (
                       <div key={val.id || val.value} className="mb-2">
-                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary">
+                        <span 
+                          className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary cursor-pointer hover:bg-primary/20 transition-colors"
+                          onClick={() => handleRelationClick(val, val.displayValue)}
+                        >
                           {val.displayValue}
                         </span>
-                        {val.relatedData.map((relatedItem: any, index: number) => (
-                          <div key={index} className="text-xs text-muted-foreground pl-4 border-l-2 border-primary/30">
+                        
+                        {/* 显示主动关联数据 */}
+                        {val.relatedData && val.relatedData.map((relatedItem: any, index: number) => (
+                          <div 
+                            key={`active-${index}`} 
+                            className="text-xs text-muted-foreground pl-4 border-l-2 border-primary/30 cursor-pointer hover:text-primary transition-colors"
+                            onClick={() => handleRelationClick(relatedItem, `${val.displayValue} 的关联数据`)}
+                          >
                             {formatMultiTableData(relatedItem)}
                           </div>
                         ))}
+                        
+                        {/* 显示被动关联数据 */}
+                        {passiveRelatedData && passiveRelatedData.length > 0 && (
+                          <div className="mt-1">
+                            <div className="text-xs font-medium text-muted-foreground">
+                              <span className="text-primary/80">被引用数据:</span>
+                            </div>
+                            {passiveRelatedData.map((relatedTable: any, tableIndex: number) => (
+                              <div key={`passive-table-${tableIndex}`} className="mt-1">
+                                <div className="text-xs text-muted-foreground font-medium">
+                                  {relatedTable.table.name || relatedTable.table.id}
+                                </div>
+                                {relatedTable.rows.slice(0, 3).map((relatedItem: any, rowIndex: number) => (
+                                  <div 
+                                    key={`passive-${tableIndex}-${rowIndex}`} 
+                                    className="text-xs text-muted-foreground pl-4 border-l-2 border-secondary/30 cursor-pointer hover:text-secondary transition-colors"
+                                    onClick={() => handleRelationClick(relatedItem, `引用此记录的数据`)}
+                                  >
+                                    {formatPassiveRelationData(relatedItem, relatedTable.table)}
+                                  </div>
+                                ))}
+                                {relatedTable.rows.length > 3 && (
+                                  <div className="text-xs text-muted-foreground pl-4 italic">
+                                    ... 还有 {relatedTable.rows.length - 3} 条未显示
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     );
                   }
@@ -2991,32 +3092,72 @@ export function DataTable({
                 );
                 const displayText = relatedItem ? relatedItem[displayColumnId] : val;
                 
+                // 获取被动关联数据
+                const passiveRelatedData = enableMultiTableQuery && getRelatedTableDataByRow(row.id);
+                
                 // 多表关联模式下显示更多信息
-                if (enableMultiTableQuery && relatedItem && Object.keys(relatedItem).length > 0) {
-                  const targetTable = getRelatedTableData(column.relation?.targetTableId || '');
-                  if (targetTable) {
-                    const relationColumns = targetTable.columns?.filter((col: Column) => 
-                      col.relation && col.relation.targetTableId
-                    ) || [];
-                    
-                    if (relationColumns.length > 0) {
-                      return (
-                        <div key={val} className="mb-2">
-                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary">
-                            {displayText || '未找到关联数据'}
-                          </span>
-                          <div className="text-xs text-muted-foreground pl-4 border-l-2 border-primary/30">
-                            {formatMultiTableData(relatedItem)}
-                          </div>
-                        </div>
-                      );
-                    }
+                if (enableMultiTableQuery) {
+                  const hasActiveRelation = relatedItem && Object.keys(relatedItem).length > 0;
+                  const hasPassiveRelation = passiveRelatedData && passiveRelatedData.length > 0;
+                  
+                  if (hasActiveRelation || hasPassiveRelation) {
+                    return (
+                      <div key={val} className="mb-2">
+                        {/* 显示主动关联数据 */}
+                        {hasActiveRelation && (
+                          <>
+                            <span 
+                              className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary cursor-pointer hover:bg-primary/20 transition-colors"
+                              onClick={() => handleRelationClick(relatedItem, displayText || '关联数据')}
+                            >
+                              {displayText || '未找到关联数据'}
+                            </span>
+                            <div 
+                              className="text-xs text-muted-foreground pl-4 border-l-2 border-primary/30 cursor-pointer hover:text-primary transition-colors"
+                              onClick={() => handleRelationClick(relatedItem, `${displayText || '关联数据'} 的详细信息`)}
+                            >
+                              {formatMultiTableData(relatedItem)}
+                            </div>
+                          </>
+                        )}
+                        
+                        {/* 显示被动关联数据 */}
+                        {hasPassiveRelation && (
+                          <>
+                            <div className="mt-1 text-xs font-medium text-muted-foreground">
+                              <span className="text-primary/80">被引用数据:</span>
+                            </div>
+                            {passiveRelatedData.map((relatedTable: any, tableIndex: number) => (
+                              <div key={`passive-table-${tableIndex}`} className="mt-1">
+                                <div className="text-xs text-muted-foreground font-medium">
+                                  {relatedTable.table.name || relatedTable.table.id}
+                                </div>
+                                {relatedTable.rows.slice(0, 3).map((relatedItem: any, rowIndex: number) => (
+                                  <div 
+                                    key={`passive-${tableIndex}-${rowIndex}`} 
+                                    className="text-xs text-muted-foreground pl-4 border-l-2 border-secondary/30 cursor-pointer hover:text-secondary transition-colors"
+                                    onClick={() => handleRelationClick(relatedItem, `引用此记录的数据`)}
+                                  >
+                                    {formatPassiveRelationData(relatedItem, relatedTable.table)}
+                                  </div>
+                                ))}
+                                {relatedTable.rows.length > 3 && (
+                                  <div className="text-xs text-muted-foreground pl-4 italic">
+                                    ... 还有 {relatedTable.rows.length - 3} 条未显示
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    );
                   }
                 }
                 
                 return (
-                  <span key={val} className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary m-1">
-                    {displayText || '未找到关联数据'}
+                  <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary m-1">
+                    {formatMultiTableData(relatedItem) || '未找到关联数据'}
                   </span>
                 );
               })
@@ -3032,15 +3173,43 @@ export function DataTable({
           // 检查是否是后端返回的格式化数据
           if (val && typeof val === 'object' && val.displayValue !== undefined) {
             // 多表关联模式下显示更多信息
-            if (enableMultiTableQuery && val.relatedData) {
+            if (enableMultiTableQuery) {
+              // 获取被动关联数据
+              const passiveRelatedData = getRelatedTableDataByRow(row.id);
+              
               return (
                 <div className="space-y-1">
-                  <span className="text-sm text-primary font-medium">
+                  <span 
+                    className="text-sm text-primary font-medium cursor-pointer hover:underline"
+                    onClick={() => handleRelationClick(val, val.displayValue)}
+                  >
                     {val.displayValue}
                   </span>
-                  {val.relatedData.map((relatedItem: any, index: number) => (
-                    <div key={index} className="text-xs text-muted-foreground pl-2 border-l-2 border-primary/30">
+                  
+                  {/* 显示主动关联数据 */}
+                  {val.relatedData && val.relatedData.map((relatedItem: any, index: number) => (
+                    <div 
+                      key={`active-${index}`} 
+                      className="text-xs text-muted-foreground pl-2 border-l-2 border-primary/30 cursor-pointer hover:text-primary transition-colors"
+                      onClick={() => handleRelationClick(relatedItem, `${val.displayValue} 的关联数据`)}
+                    >
                       {formatMultiTableData(relatedItem)}
+                    </div>
+                  ))}
+                  
+                  {/* 显示被动关联数据 */}
+                  {passiveRelatedData && passiveRelatedData.length > 0 && (
+                    <div className="mt-1 text-xs font-medium text-muted-foreground">
+                      <span className="text-primary/80">被引用数据:</span>
+                    </div>
+                  )}
+                  {passiveRelatedData && passiveRelatedData.map((relatedItem: any, index: number) => (
+                    <div 
+                      key={`passive-${index}`} 
+                      className="text-xs text-muted-foreground pl-2 border-l-2 border-secondary/30 cursor-pointer hover:text-secondary transition-colors"
+                      onClick={() => handleRelationClick(relatedItem, `引用此记录的数据`)}
+                    >
+                      {formatPassiveRelationData(relatedItem, {})}
                     </div>
                   ))}
                 </div>
@@ -3062,29 +3231,43 @@ export function DataTable({
             
             // 多表关联模式下显示更多信息
             if (enableMultiTableQuery && relatedItem && Object.keys(relatedItem).length > 0) {
-              // 尝试查找关联的第二级数据
-              const targetTable = getRelatedTableData(column.relation?.targetTableId || '');
-              if (targetTable) {
-                // 查找可能的关联字段
-                const relationColumns = targetTable.columns?.filter((col: Column) => 
-                  col.relation && col.relation.targetTableId
-                ) || [];
-                
-                // 检查是否有额外的关联数据
-                if (relationColumns.length > 0) {
-                  return (
-                    <div className="space-y-1">
-                      <span className="text-sm text-primary font-medium">
-                        {displayText || '未找到关联数据'}
-                      </span>
-                      {/* 显示关联数据的摘要信息 */}
-                      <div className="text-xs text-muted-foreground pl-2 border-l-2 border-primary/30">
-                        {formatMultiTableData(relatedItem)}
-                      </div>
+              // 获取被动关联数据
+              const passiveRelatedData = getRelatedTableDataByRow(row.id);
+              
+              return (
+                <div className="space-y-1">
+                  <span 
+                    className="text-sm text-primary font-medium cursor-pointer hover:underline"
+                    onClick={() => handleRelationClick(relatedItem, displayText || '关联数据')}
+                  >
+                    {displayText || '未找到关联数据'}
+                  </span>
+                  
+                  {/* 显示关联数据的摘要信息 */}
+                  <div 
+                    className="text-xs text-muted-foreground pl-2 border-l-2 border-primary/30 cursor-pointer hover:text-primary transition-colors"
+                    onClick={() => handleRelationClick(relatedItem, `${displayText || '关联数据'} 的详细信息`)}
+                  >
+                    {formatMultiTableData(relatedItem)}
+                  </div>
+                  
+                  {/* 显示被动关联数据 */}
+                  {passiveRelatedData && passiveRelatedData.length > 0 && (
+                    <div className="mt-1 text-xs font-medium text-muted-foreground">
+                      <span className="text-primary/80">被引用数据:</span>
                     </div>
-                  );
-                }
-              }
+                  )}
+                  {passiveRelatedData && passiveRelatedData.map((relatedItem: any, index: number) => (
+                    <div 
+                      key={`passive-${index}`} 
+                      className="text-xs text-muted-foreground pl-2 border-l-2 border-secondary/30 cursor-pointer hover:text-secondary transition-colors"
+                      onClick={() => handleRelationClick(relatedItem, `引用此记录的数据`)}
+                    >
+                      {formatPassiveRelationData(relatedItem, {})}
+                    </div>
+                  ))}
+                </div>
+              );
             }
             
             return (
@@ -3778,6 +3961,28 @@ export function DataTable({
               </div>
             </DialogContent>
           </Dialog>
+        
+        {/* 关联数据详情弹窗 */}
+        <Dialog open={showRelationDetail} onOpenChange={setShowRelationDetail}>
+          <DialogContent className="sm:max-w-[600px]">
+            <DialogHeader>
+              <DialogTitle>{relationDataTitle}</DialogTitle>
+              <DialogDescription>
+                关联数据详情
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="mt-4 max-h-[400px] overflow-y-auto">
+              {renderRelationDetail(selectedRelationData)}
+            </div>
+            
+            <DialogFooter className="mt-4">
+              <Button onClick={() => setShowRelationDetail(false)}>
+                关闭
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
           {/* 清除篩選和排序 */}
           <div className="flex items-center gap-2">
