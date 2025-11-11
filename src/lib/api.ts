@@ -238,6 +238,11 @@ class ApiService {
   async getAuthMe() {
     return this.request(`/auth/me`);
   }
+
+  // 获取用户详细信息，使用OIDC访问令牌
+  async getUserInfo() {
+    return this.request(`/auth/userinfo`);
+  }
 }
 
 export const apiService = new ApiService();
