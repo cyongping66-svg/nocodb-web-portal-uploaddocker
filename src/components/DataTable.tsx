@@ -3025,7 +3025,7 @@ export function DataTable({
                   // 多表关联模式下显示更多信息
                   if (enableMultiTableQuery) {
                     // 获取被动关联数据
-                    const passiveRelatedData = getRelatedTableDataByRow(row.id);
+                    const passiveRelatedData = getRelatedTableDataByRow(table.id, row.id);
                     
                     return (
                       <div key={val.id || val.value} className="mb-2">
@@ -3093,7 +3093,7 @@ export function DataTable({
                 const displayText = relatedItem ? relatedItem[displayColumnId] : val;
                 
                 // 获取被动关联数据
-                const passiveRelatedData = enableMultiTableQuery && getRelatedTableDataByRow(row.id);
+                const passiveRelatedData = enableMultiTableQuery ? getRelatedTableDataByRow(table.id, row.id) : null;
                 
                 // 多表关联模式下显示更多信息
                 if (enableMultiTableQuery) {
@@ -3175,7 +3175,7 @@ export function DataTable({
             // 多表关联模式下显示更多信息
             if (enableMultiTableQuery) {
               // 获取被动关联数据
-              const passiveRelatedData = getRelatedTableDataByRow(row.id);
+              const passiveRelatedData = getRelatedTableDataByRow(table.id, row.id);
               
               return (
                 <div className="space-y-1">
@@ -3232,7 +3232,7 @@ export function DataTable({
             // 多表关联模式下显示更多信息
             if (enableMultiTableQuery && relatedItem && Object.keys(relatedItem).length > 0) {
               // 获取被动关联数据
-              const passiveRelatedData = getRelatedTableDataByRow(row.id);
+              const passiveRelatedData = getRelatedTableDataByRow(table.id, row.id);
               
               return (
                 <div className="space-y-1">

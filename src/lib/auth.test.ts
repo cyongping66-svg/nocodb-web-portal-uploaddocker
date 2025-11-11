@@ -1,4 +1,12 @@
 // auth.test.ts - 测试HRSaaS API对接和用户信息管理功能
+// Jest类型声明
+declare const jest: any;
+declare const describe: any;
+declare const it: any;
+declare const beforeEach: any;
+declare const afterEach: any;
+declare const expect: any;
+
 import { 
   UserInfo, 
   fetchUserInfoFromHRSaaS, 

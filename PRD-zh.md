@@ -314,3 +314,86 @@ getRelatedTableDataByRow函数返回的数据结构为：
 - 文件：上传与预览稳定；清空列内附件信息不删除磁盘文件；URL在不同端口下可正确访问。
 - 响应式：桌面/移动布局与交互一致性良好；移动端默认卡片视图与汉堡菜单生效。
 - 导航与版本：反馈入口跳转正常；版本信息以蓝色圆点+文本显示，便于识别与维护。
+
+## API接口文档
+
+### 获取用户员工信息接口
+
+#### 接口描述
+该接口用于获取当前登录用户的员工信息，包括基本信息、部门信息、职位信息等。接口通过请求头中的Authorization进行身份验证，返回详细的员工信息数据。
+
+#### 请求信息
+- **请求方法**: GET
+- **请求URL**: `/api/user/employee-info`
+- **请求头**:
+  - `Authorization`: 认证令牌（Bearer token格式）
+
+#### 请求示例
+```http
+GET /api/user/employee-info
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+#### 响应数据结构
+响应数据包含一个message字段和一个data对象，data对象中包含用户的完整员工信息：
+
+| 字段名 | 类型 | 描述 |
+|--------|------|------|
+| message | string | 响应状态消息 |
+| data | object | 用户员工信息对象 |
+| data.userId | string | 用户ID |
+| data.employeeId | string | 员工ID |
+| data.name | string | 员工姓名 |
+| data.email | string | 电子邮箱 |
+| data.phone | string | 电话号码 |
+| data.avatar | string | 头像URL |
+| data.gender | string | 性别 |
+| data.birthday | string | 出生日期 |
+| data.department | string | 部门 |
+| data.position | string | 职位 |
+| data.level | string | 职级 |
+| data.employmentStatus | string | 在职状态 |
+| data.entryDate | string | 入职日期 |
+| data.workLocation | string | 工作地点 |
+| data.managerId | string | 直属上级ID |
+| data.managerName | string | 直属上级姓名 |
+
+#### 响应示例
+```json
+{
+  "message": "success",
+  "data": {
+    "userId": "EMP10086",
+    "employeeId": "E20230601001",
+    "name": "张三",
+    "email": "zhangsan@example.com",
+    "phone": "13800138000",
+    "avatar": "https://example.com/avatars/zhangsan.jpg",
+    "gender": "男",
+    "birthday": "1990-01-01",
+    "department": "技术部",
+    "position": "高级前端工程师",
+    "level": "P6",
+    "employmentStatus": "在职",
+    "entryDate": "2021-06-01",
+    "workLocation": "北京市海淀区",
+    "managerId": "EMP10001",
+    "managerName": "李四"
+  }
+}
+```
+
+#### 错误响应示例
+```json
+{
+  "message": "unauthorized",
+  "data": null
+}
+```
+
+#### 接口使用场景
+该接口目前主要用于以下场景：
+1. 用户登录后获取个人详细信息（包括姓名、部门、职位、直属上级等）并存储在本地
+2. 为用户界面提供基本的用户身份信息
+
+注：当前实现中，虽然获取了职级、部门和直属上级信息，但尚未实现根据这些信息动态控制权限或构建完整员工关系链的功能。这些功能将在后续版本中实现。

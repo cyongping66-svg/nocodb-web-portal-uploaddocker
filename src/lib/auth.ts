@@ -45,7 +45,7 @@ const storageService = {
   // 清除所有认证相关数据
   clearAuthData(): void {
     const authKeys = ['userInfo', 'currentUserName', 'foundation_user_name', 'oidc_access_token', 'oidc_refresh_token', 
-                     'foundation_user_role', 'foundation_user_permissions', 'foundation_user_email', 
+                     'foundation_user_role', 'foundation_user_permissions',
                      'foundation_user_groups', 'foundation_user_scope',
                      'token_expiry_timestamp', 'last_token_check', 'last_api_error']; // 添加新的认证相关键
     authKeys.forEach(key => this.removeItem(key));
@@ -352,7 +352,6 @@ export const fetchUserInfoFromHRSaaS = async (token: string, maxRetries = 2): Pr
         storageService.setItem('foundation_user_permissions', JSON.stringify(userInfo.foundation_user_permissions || []));
         
         // 保存额外的用户上下文信息
-        storageService.setItem('foundation_user_email', String(data.email || ''));
         storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(data.groups) ? data.groups : []));
         
         // 保存token及过期信息
@@ -509,3 +508,6 @@ export function onAuthCleared(callback: (reason?: string) => void): () => void {
     window.removeEventListener('auth_cleared', eventHandler as EventListener);
   };
 }
+
+// 导出存储服务
+export { storageService };

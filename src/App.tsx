@@ -18,6 +18,7 @@ import { DataTable } from '@/components/DataTable';
 import { CardView } from '@/components/CardView';
 import { apiService } from '@/lib/api';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
+import { storageService, getUserInfo, fetchUserInfoFromHRSaaS } from '@/lib/auth';
 
 function App() {
   const { 
@@ -52,7 +53,7 @@ function App() {
   const [isLoginDialogOpen, setIsLoginDialogOpen] = useState(false);
   // 新增：賬號詳情對話框開關
   const [isAccountDialogOpen, setIsAccountDialogOpen] = useState(false);
-  const [currentEmail, setCurrentEmail] = useState<string | null>(null);
+  //const [currentEmail, setCurrentEmail] = useState<string | null>(null);
   const [currentGroups, setCurrentGroups] = useState<string[]>([]);
   const [currentScope, setCurrentScope] = useState<string | null>(null);
   // 新增：保護密碼登入的管理員與 Foundation 使用者列表
@@ -340,19 +341,33 @@ function App() {
 
         // 初始化用户信息
         try {
-          // 从auth.ts导入统一的存储服务
-          const { storageService } = await import('./lib/auth');
+          // 使用顶部已经导入的storageService
           
           // 从accessToken中提取用户标识（如果有）或使用默认值
-          let userName = null;
-          let userData = {};
+          let userName: string = '';
+          interface TokenData {
+            name?: string;
+            preferred_username?: string;
+            email?: string;
+            sub?: string | number;
+            company?: string;
+            department?: string;
+            group?: string;
+            position?: string;
+            supervisor?: string;
+            role?: string;
+            permissions?: string[];
+            groups?: string[];
+            scope?: string;
+          }
+          let userData: TokenData = {};
           if (accessToken) {
             try {
               // 尝试从JWT token中提取信息（如果格式正确）
               const tokenParts = accessToken.split('.');
               if (tokenParts.length === 3) {
-                const decoded = JSON.parse(atob(tokenParts[1]));
-                userName = decoded.name || decoded.preferred_username || decoded.email || (decoded.sub ? String(decoded.sub).slice(0, 8) : null);
+                const decoded = JSON.parse(atob(tokenParts[1])) as TokenData;
+                userName = decoded.name || decoded.preferred_username || decoded.email || (decoded.sub ? String(decoded.sub).slice(0, 8) : '');
                 userData = decoded; // 保存完整的token数据
               }
             } catch (e) {
@@ -377,33 +392,35 @@ function App() {
             supervisor_nickname: String(userData.supervisor || ''),
             supervisor_name: String(userData.supervisor || ''),
             foundation_user_role: String(userData.role || 'user'),
-            foundation_user_permissions: Array.isArray(userData.permissions) ? userData.permissions : (Array.isArray(userData.groups) && userData.groups.includes('permission-admin') ? ['admin.manage'] : []),
+            foundation_user_permissions: Array.isArray(userData.permissions) ? userData.permissions : (Array.isArray(userData.groups) && userData.groups?.includes('permission-admin') ? ['admin.manage'] : []),
             admin_login_method: 'oidc'
           };
           
           // 使用统一的存储服务保存用户信息
-          storageService.setItem('userInfo', JSON.stringify(userInfo));
-          storageService.setItem('currentUserName', userInfo.nickname || userInfo.name);
-          storageService.setItem('foundation_user_name', userInfo.nickname || userInfo.name);
-          storageService.setItem('foundation_user_role', userInfo.foundation_user_role || 'user');
-          storageService.setItem('foundation_user_permissions', JSON.stringify(userInfo.foundation_user_permissions || []));
-          storageService.setItem('foundation_user_email', String(userData.email || ''));
-          storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(userData.groups) ? userData.groups : []));
-          storageService.setItem('foundation_user_scope', String(userData.scope || ''));
+          if (storageService) {
+            storageService.setItem('userInfo', JSON.stringify(userInfo));
+            storageService.setItem('currentUserName', userInfo.nickname || userInfo.name);
+            storageService.setItem('foundation_user_name', userInfo.nickname || userInfo.name);
+            storageService.setItem('foundation_user_role', userInfo.foundation_user_role || 'user');
+            storageService.setItem('foundation_user_permissions', JSON.stringify(userInfo.foundation_user_permissions || []));
+            storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(userData.groups) ? userData.groups : []));
+            storageService.setItem('foundation_user_scope', String(userData.scope || ''));
+          }
           
           // 更新组件状态
           setCurrentUserName(userInfo.nickname || userInfo.name);
           setCurrentRole(userInfo.foundation_user_role || 'user');
           setCurrentPermissions(userInfo.foundation_user_permissions || []);
-          setCurrentEmail(String(userData.email || null));
           setCurrentGroups(Array.isArray(userData.groups) ? userData.groups : []);
-          setCurrentScope(String(userData.scope || null));
+          setCurrentScope(String(userData.scope || ''));
           
           console.log('OIDC登录成功，已初始化用户信息:', userInfo);
           console.log('Token已保存到localStorage和sessionStorage');
           
           // 同步存储数据
-          storageService.syncStorage();
+          if (storageService && storageService.syncStorage) {
+            storageService.syncStorage();
+          }
         } catch (e) {
           console.error('初始化用户信息失败:', e);
         }
@@ -438,11 +455,12 @@ function App() {
           try { localStorage.setItem('oidc_refresh_token', sessionStorageRefreshToken); } catch {}
         }
         
-        // 导入统一的存储服务和用户信息相关函数
-        const { storageService, getUserInfo, fetchUserInfoFromHRSaaS } = await import('./lib/auth');
+        // 已在顶部导入存储服务和用户信息相关函数
         
         // 使用统一的存储服务同步数据
-        storageService.syncStorage();
+        if (storageService && storageService.syncStorage) {
+          storageService.syncStorage();
+        }
         
         // 1. 获取token
         const token = storageService.getItem('oidc_access_token');
@@ -485,7 +503,6 @@ function App() {
                 storageService.setItem('foundation_user_name', name);
                 storageService.setItem('foundation_user_role', tempUserInfo.foundation_user_role || 'user');
                 storageService.setItem('foundation_user_permissions', JSON.stringify(tempUserInfo.foundation_user_permissions || []));
-                storageService.setItem('foundation_user_email', String(decoded.email || ''));
                 storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(decoded.groups) ? decoded.groups : []));
                 
                 console.log('成功从token重建用户信息:', name);
@@ -514,11 +531,9 @@ function App() {
           setCurrentPermissions(userInfo.foundation_user_permissions || []);
           
           // 加载额外的用户信息
-          const savedEmail = storageService.getItem('foundation_user_email');
           const savedGroupsStr = storageService.getItem('foundation_user_groups');
           const savedScope = storageService.getItem('foundation_user_scope');
           
-          if (savedEmail) setCurrentEmail(savedEmail);
           if (savedGroupsStr) {
             try {
               const groups = JSON.parse(savedGroupsStr);
@@ -537,7 +552,6 @@ function App() {
           setCurrentUserName(savedName);
           const savedRole = storageService.getItem('foundation_user_role');
           const savedPermissionsStr = storageService.getItem('foundation_user_permissions');
-          const savedEmail = storageService.getItem('foundation_user_email');
           const savedGroupsStr = storageService.getItem('foundation_user_groups');
           const savedScope = storageService.getItem('foundation_user_scope');
           
@@ -552,7 +566,6 @@ function App() {
               console.warn('解析权限信息失败:', e);
             }
           }
-          if (savedEmail) setCurrentEmail(savedEmail);
           if (savedGroupsStr) {
             try {
               const groups = JSON.parse(savedGroupsStr);
@@ -585,10 +598,8 @@ function App() {
               }
               
               // 加载额外的用户信息
-              const savedEmail = storageService.getItem('foundation_user_email');
               const savedGroupsStr = storageService.getItem('foundation_user_groups');
               
-              if (savedEmail) setCurrentEmail(savedEmail);
               if (savedGroupsStr) {
                 try {
                   const groups = JSON.parse(savedGroupsStr);
@@ -634,7 +645,6 @@ function App() {
     setCurrentRole(null);
     setCurrentPermissions([]);
     setIsPasswordAdmin(false);
-    setCurrentEmail(null);
     setCurrentGroups([]);
     setCurrentScope(null);
     setIsAccountDialogOpen(false);
@@ -1653,10 +1663,7 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
                      <span className="text-muted-foreground">角色</span>
                      <span className="font-medium">{currentRole || '未設定'}</span>
                    </div>
-                   <div className="flex items-center justify-between">
-                     <span className="text-muted-foreground">Email</span>
-                     <span className="font-medium">{currentEmail || '未提供'}</span>
-                   </div>
+                   
                    <div>
                      <div className="text-muted-foreground mb-1">用戶組</div>
                      {(currentGroups && currentGroups.length > 0) ? (
