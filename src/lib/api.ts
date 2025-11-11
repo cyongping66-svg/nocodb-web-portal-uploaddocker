@@ -20,7 +20,8 @@ class ApiService {
     const method = (options.method || 'GET').toUpperCase();
     const isWriteMethod = method !== 'GET' && method !== 'HEAD';
     const currentUserName = localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name');
-    if (isWriteMethod && !currentUserName) {
+    const userInfo = localStorage.getItem('userInfo');
+    if (isWriteMethod && !currentUserName && !userInfo) {
       throw new Error('NOT_AUTHENTICATED');
     }
 
@@ -155,7 +156,8 @@ class ApiService {
     const url = `${baseUrl}/api/tables/${tableId}/rows/${rowId}/files/${columnId}`;
 
     const currentUserName = localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name');
-    if (!currentUserName) {
+    const userInfo = localStorage.getItem('userInfo');
+    if (!currentUserName && !userInfo) {
       throw new Error('NOT_AUTHENTICATED');
     }
 
@@ -239,9 +241,21 @@ class ApiService {
     return this.request(`/auth/me`);
   }
 
-  // 获取用户详细信息，使用OIDC访问令牌
+  // 获取用户详细信息，使用HRSaaS API
   async getUserInfo() {
-    return this.request(`/auth/userinfo`);
+    try {
+      // 首先尝试从localStorage获取用户信息
+      const userInfoStr = localStorage.getItem('userInfo');
+      if (userInfoStr) {
+        return JSON.parse(userInfoStr);
+      }
+      
+      // 如果localStorage中没有，则调用auth/userinfo作为后备方案
+      return this.request(`/auth/userinfo`);
+    } catch (error) {
+      console.error('Error getting user info:', error);
+      throw error;
+    }
   }
 }
 

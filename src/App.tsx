@@ -109,27 +109,7 @@ function App() {
     }
   }, []);
 
-  // 新增：Foundation 使用者列表（從 localStorage）
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('foundation_user_list');
-      if (!raw) return;
-      let list: string[] = [];
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          list = parsed.filter((x) => typeof x === 'string');
-        }
-      } catch {
-        if (raw.includes(',')) {
-          list = raw.split(',').map((s) => s.trim()).filter(Boolean);
-        }
-      }
-      if (list.length > 0) {
-        setFoundationUsers(Array.from(new Set(list)));
-      }
-    } catch {}
-  }, []);
+ 
 
   // 新增：密碼登入管理員保護狀態
   useEffect(() => {
@@ -195,24 +175,8 @@ function App() {
 
 
 
-  // 讀取本地緩存的 email / groups / scope
-  useEffect(() => {
-    try {
-      const email = localStorage.getItem('foundation_user_email');
-      const groupsRaw = localStorage.getItem('foundation_user_groups');
-      const scope = localStorage.getItem('foundation_user_scope');
-      if (email) setCurrentEmail(email);
-      if (groupsRaw) {
-        try {
-          const parsed = JSON.parse(groupsRaw);
-          if (Array.isArray(parsed)) setCurrentGroups(parsed);
-        } catch {
-          if (groupsRaw.includes(',')) setCurrentGroups(groupsRaw.split(',').map(s => s.trim()).filter(Boolean));
-        }
-      }
-      if (scope) setCurrentScope(scope);
-    } catch {}
-  }, []);
+
+
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -376,15 +340,20 @@ function App() {
 
         // 初始化用户信息
         try {
+          // 从auth.ts导入统一的存储服务
+          const { storageService } = await import('./lib/auth');
+          
           // 从accessToken中提取用户标识（如果有）或使用默认值
           let userName = null;
+          let userData = {};
           if (accessToken) {
             try {
               // 尝试从JWT token中提取信息（如果格式正确）
               const tokenParts = accessToken.split('.');
               if (tokenParts.length === 3) {
                 const decoded = JSON.parse(atob(tokenParts[1]));
-                userName = decoded.name || decoded.preferred_username || decoded.email || null;
+                userName = decoded.name || decoded.preferred_username || decoded.email || (decoded.sub ? String(decoded.sub).slice(0, 8) : null);
+                userData = decoded; // 保存完整的token数据
               }
             } catch (e) {
               console.warn('解析token获取用户信息失败:', e);
@@ -396,44 +365,45 @@ function App() {
             userName = 'user_' + Date.now().toString(36).substr(2, 9);
           }
           
-          // 初始化并保存用户基本信息
+          // 构建标准格式的用户信息对象
           const userInfo = {
+            id: String(userData.sub || ''),
             name: userName,
-            role: 'user', // 默认角色
-            permissions: [],
-            email: null,
-            groups: [],
-            scope: null
+            nickname: userName,
+            company_name: String(userData.company || ''),
+            department_name: String(userData.department || ''),
+            group_name: String(userData.group || ''),
+            position_name: String(userData.position || ''),
+            supervisor_nickname: String(userData.supervisor || ''),
+            supervisor_name: String(userData.supervisor || ''),
+            foundation_user_role: String(userData.role || 'user'),
+            foundation_user_permissions: Array.isArray(userData.permissions) ? userData.permissions : (Array.isArray(userData.groups) && userData.groups.includes('permission-admin') ? ['admin.manage'] : []),
+            admin_login_method: 'oidc'
           };
           
-          // 保存到localStorage
-          try { localStorage.setItem('currentUserName', userInfo.name); } catch {}
-          try { localStorage.setItem('foundation_user_name', userInfo.name); } catch {}
-          try { localStorage.setItem('foundation_user_role', userInfo.role); } catch {}
-          try { localStorage.setItem('foundation_user_permissions', JSON.stringify(userInfo.permissions)); } catch {}
-          try { localStorage.setItem('foundation_user_email', String(userInfo.email)); } catch {}
-          try { localStorage.setItem('foundation_user_groups', JSON.stringify(userInfo.groups)); } catch {}
-          try { localStorage.setItem('foundation_user_scope', String(userInfo.scope)); } catch {}
-          
-          // 同时保存到sessionStorage
-          try { sessionStorage.setItem('currentUserName', userInfo.name); } catch {}
-          try { sessionStorage.setItem('foundation_user_name', userInfo.name); } catch {}
-          try { sessionStorage.setItem('foundation_user_role', userInfo.role); } catch {}
-          try { sessionStorage.setItem('foundation_user_permissions', JSON.stringify(userInfo.permissions)); } catch {}
-          try { sessionStorage.setItem('foundation_user_email', String(userInfo.email)); } catch {}
-          try { sessionStorage.setItem('foundation_user_groups', JSON.stringify(userInfo.groups)); } catch {}
-          try { sessionStorage.setItem('foundation_user_scope', String(userInfo.scope)); } catch {}
+          // 使用统一的存储服务保存用户信息
+          storageService.setItem('userInfo', JSON.stringify(userInfo));
+          storageService.setItem('currentUserName', userInfo.nickname || userInfo.name);
+          storageService.setItem('foundation_user_name', userInfo.nickname || userInfo.name);
+          storageService.setItem('foundation_user_role', userInfo.foundation_user_role || 'user');
+          storageService.setItem('foundation_user_permissions', JSON.stringify(userInfo.foundation_user_permissions || []));
+          storageService.setItem('foundation_user_email', String(userData.email || ''));
+          storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(userData.groups) ? userData.groups : []));
+          storageService.setItem('foundation_user_scope', String(userData.scope || ''));
           
           // 更新组件状态
-          setCurrentUserName(userInfo.name);
-          setCurrentRole(userInfo.role);
-          setCurrentPermissions(userInfo.permissions);
-          setCurrentEmail(userInfo.email);
-          setCurrentGroups(userInfo.groups);
-          setCurrentScope(userInfo.scope);
+          setCurrentUserName(userInfo.nickname || userInfo.name);
+          setCurrentRole(userInfo.foundation_user_role || 'user');
+          setCurrentPermissions(userInfo.foundation_user_permissions || []);
+          setCurrentEmail(String(userData.email || null));
+          setCurrentGroups(Array.isArray(userData.groups) ? userData.groups : []);
+          setCurrentScope(String(userData.scope || null));
           
           console.log('OIDC登录成功，已初始化用户信息:', userInfo);
           console.log('Token已保存到localStorage和sessionStorage');
+          
+          // 同步存储数据
+          storageService.syncStorage();
         } catch (e) {
           console.error('初始化用户信息失败:', e);
         }
@@ -468,93 +438,90 @@ function App() {
           try { localStorage.setItem('oidc_refresh_token', sessionStorageRefreshToken); } catch {}
         }
         
-        // 获取用户信息（优先从sessionStorage读取）
-        const savedName = sessionStorage.getItem('currentUserName') || localStorage.getItem('currentUserName') || 
-                          sessionStorage.getItem('foundation_user_name') || localStorage.getItem('foundation_user_name');
+        // 导入统一的存储服务和用户信息相关函数
+        const { storageService, getUserInfo, fetchUserInfoFromHRSaaS } = await import('./lib/auth');
         
-        // 如果没有token，跳过getAuthMe调用
-        const token = localStorageToken || sessionStorageToken;
-        if (!token) {
-          console.log('没有找到token，跳过getAuthMe调用');
-          return;
-        }
+        // 使用统一的存储服务同步数据
+        storageService.syncStorage();
         
-        // 如果没有用户信息但有token，初始化默认用户信息
-        if (!savedName) {
-          // 尝试从token中提取信息
-          let userName = null;
+        // 1. 获取token
+        const token = storageService.getItem('oidc_access_token');
+        
+        // 2. 获取用户信息
+        let userInfo = getUserInfo();
+        let savedName = storageService.getItem('currentUserName') || storageService.getItem('foundation_user_name');
+        
+        // 3. 核心问题处理：如果有token但没有用户信息，尝试从token重建用户信息
+        if (token && !userInfo && !savedName) {
+          console.warn('检测到有token但无用户信息，尝试从token重建');
           try {
+            // 尝试从token重建用户信息
             const tokenParts = token.split('.');
             if (tokenParts.length === 3) {
               const decoded = JSON.parse(atob(tokenParts[1]));
-              userName = decoded.name || decoded.preferred_username || decoded.email || null;
+              const name = decoded.name || decoded.preferred_username || decoded.email || 
+                         ('sub' in decoded ? String(decoded.sub).slice(0, 8) : null);
+              
+              if (name) {
+                const tempUserInfo = {
+                  id: String(decoded.sub || ''),
+                  name: name,
+                  nickname: name,
+                  company_name: String(decoded.company || ''),
+                  department_name: String(decoded.department || ''),
+                  group_name: String(decoded.group || ''),
+                  position_name: String(decoded.position || ''),
+                  supervisor_nickname: String(decoded.supervisor || ''),
+                  supervisor_name: String(decoded.supervisor || ''),
+                  foundation_user_role: String(decoded.role || 'user'),
+                  foundation_user_permissions: Array.isArray(decoded.permissions) ? decoded.permissions : 
+                                             (Array.isArray(decoded.groups) && decoded.groups.includes('permission-admin') ? ['admin.manage'] : []),
+                  admin_login_method: 'oidc'
+                };
+                
+                // 保存重建的用户信息
+                storageService.setItem('userInfo', JSON.stringify(tempUserInfo));
+                storageService.setItem('currentUserName', name);
+                storageService.setItem('foundation_user_name', name);
+                storageService.setItem('foundation_user_role', tempUserInfo.foundation_user_role || 'user');
+                storageService.setItem('foundation_user_permissions', JSON.stringify(tempUserInfo.foundation_user_permissions || []));
+                storageService.setItem('foundation_user_email', String(decoded.email || ''));
+                storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(decoded.groups) ? decoded.groups : []));
+                
+                console.log('成功从token重建用户信息:', name);
+                savedName = name;
+                userInfo = tempUserInfo;
+              }
             }
           } catch (e) {
-            console.warn('解析token获取用户信息失败:', e);
+            console.error('从token重建用户信息失败:', e);
           }
+        }
+        
+        // 4. 如果仍然没有用户信息但有token，这是一个严重问题
+        if (token && !savedName) {
+          console.error('有token但无法重建用户信息');
+          toast.error('认证状态异常，请重新登录');
+          // 清除无效的token
+          storageService.clearAuthData();
+          return;
+        }
+        
+        // 5. 加载用户信息到状态
+        if (userInfo) {
+          setCurrentUserName(userInfo.nickname || userInfo.name);
+          setCurrentRole(userInfo.foundation_user_role || 'user');
+          setCurrentPermissions(userInfo.foundation_user_permissions || []);
           
-          // 如果无法从token获取，使用默认值
-          if (!userName) {
-            userName = 'user_' + Date.now().toString(36).substr(2, 9);
-          }
+          // 加载额外的用户信息
+          const savedEmail = storageService.getItem('foundation_user_email');
+          const savedGroupsStr = storageService.getItem('foundation_user_groups');
+          const savedScope = storageService.getItem('foundation_user_scope');
           
-          const defaultUserInfo = {
-            name: userName,
-            role: 'user',
-            permissions: [],
-            email: null,
-            groups: [],
-            scope: null
-          };
-          
-          // 保存到两个存储
-          const saveToBothStorages = (key, value) => {
-            try { localStorage.setItem(key, value); } catch {}
-            try { sessionStorage.setItem(key, value); } catch {}
-          };
-          
-          saveToBothStorages('currentUserName', defaultUserInfo.name);
-          saveToBothStorages('foundation_user_name', defaultUserInfo.name);
-          saveToBothStorages('foundation_user_role', defaultUserInfo.role);
-          saveToBothStorages('foundation_user_permissions', JSON.stringify(defaultUserInfo.permissions));
-          saveToBothStorages('foundation_user_email', String(defaultUserInfo.email));
-          saveToBothStorages('foundation_user_groups', JSON.stringify(defaultUserInfo.groups));
-          saveToBothStorages('foundation_user_scope', String(defaultUserInfo.scope));
-          
-          // 更新状态
-          setCurrentUserName(defaultUserInfo.name);
-          setCurrentRole(defaultUserInfo.role);
-          setCurrentPermissions(defaultUserInfo.permissions);
-          setCurrentEmail(defaultUserInfo.email);
-          setCurrentGroups(defaultUserInfo.groups);
-          setCurrentScope(defaultUserInfo.scope);
-          
-          console.log('有token但没有用户信息，已初始化默认用户信息:', defaultUserInfo);
-        } else {
-          // 已经有用户信息，尝试从存储中加载
-          const savedRole = sessionStorage.getItem('foundation_user_role') || localStorage.getItem('foundation_user_role');
-          const savedPermissions = sessionStorage.getItem('foundation_user_permissions') || localStorage.getItem('foundation_user_permissions');
-          const savedEmail = sessionStorage.getItem('foundation_user_email') || localStorage.getItem('foundation_user_email');
-          const savedGroups = sessionStorage.getItem('foundation_user_groups') || localStorage.getItem('foundation_user_groups');
-          const savedScope = sessionStorage.getItem('foundation_user_scope') || localStorage.getItem('foundation_user_scope');
-          
-          // 更新状态
-          if (savedName) setCurrentUserName(savedName);
-          if (savedRole) setCurrentRole(savedRole);
-          if (savedPermissions) {
-            try {
-              const permissions = JSON.parse(savedPermissions);
-              if (Array.isArray(permissions)) {
-                setCurrentPermissions(permissions);
-              }
-            } catch (e) {
-              console.warn('解析权限信息失败:', e);
-            }
-          }
           if (savedEmail) setCurrentEmail(savedEmail);
-          if (savedGroups) {
+          if (savedGroupsStr) {
             try {
-              const groups = JSON.parse(savedGroups);
+              const groups = JSON.parse(savedGroupsStr);
               if (Array.isArray(groups)) {
                 setCurrentGroups(groups);
               }
@@ -564,62 +531,93 @@ function App() {
           }
           if (savedScope) setCurrentScope(savedScope);
           
-          console.log('已从存储加载用户信息');
+          console.log('已从userInfo对象加载用户信息');
+        } else if (savedName) {
+          // 回退到旧的加载方式
+          setCurrentUserName(savedName);
+          const savedRole = storageService.getItem('foundation_user_role');
+          const savedPermissionsStr = storageService.getItem('foundation_user_permissions');
+          const savedEmail = storageService.getItem('foundation_user_email');
+          const savedGroupsStr = storageService.getItem('foundation_user_groups');
+          const savedScope = storageService.getItem('foundation_user_scope');
+          
+          if (savedRole) setCurrentRole(savedRole);
+          if (savedPermissionsStr) {
+            try {
+              const permissions = JSON.parse(savedPermissionsStr);
+              if (Array.isArray(permissions)) {
+                setCurrentPermissions(permissions);
+              }
+            } catch (e) {
+              console.warn('解析权限信息失败:', e);
+            }
+          }
+          if (savedEmail) setCurrentEmail(savedEmail);
+          if (savedGroupsStr) {
+            try {
+              const groups = JSON.parse(savedGroupsStr);
+              if (Array.isArray(groups)) {
+                setCurrentGroups(groups);
+              }
+            } catch (e) {
+              console.warn('解析群组信息失败:', e);
+            }
+          }
+          if (savedScope) setCurrentScope(savedScope);
+          
+          console.log('已从存储加载基础用户信息');
         }
         
-        // 仍然尝试调用getAuthMe以获取最新信息，但不依赖它
-        try {
-          console.log('尝试调用getAuthMe获取最新用户信息');
-          const me = await apiService.getAuthMe();
-          if (me && me.authenticated && me.user) {
-            const data = me.user;
-            const name = data.name || data.preferred_username || data.email;
-            if (name) {
-              try { localStorage.setItem('currentUserName', name); } catch {}
-              try { sessionStorage.setItem('currentUserName', name); } catch {}
-              setCurrentUserName(name);
-            }
-            const foundationRole = (data.raw && data.raw.role) ? String(data.raw.role) : null;
-            if (foundationRole) {
-              try { localStorage.setItem('foundation_user_role', foundationRole); } catch {}
-              try { sessionStorage.setItem('foundation_user_role', foundationRole); } catch {}
-              setCurrentRole(foundationRole);
-            }
-            let nextPerms: string[] = [];
-            const groups = Array.isArray(data.groups) ? data.groups : [];
-            const isAdvanced = groups.includes('permission-admin');
-            if (isAdvanced) {
-              nextPerms = Array.from(new Set([...(nextPerms || []), 'admin.manage'])) as string[];
-            }
-            if (nextPerms.length > 0) {
-              try { localStorage.setItem('foundation_user_permissions', JSON.stringify(nextPerms)); } catch {}
-              try { sessionStorage.setItem('foundation_user_permissions', JSON.stringify(nextPerms)); } catch {}
-              setCurrentPermissions(nextPerms);
-            }
-            // 保存 email / groups / scope
-            {
-              const email = data.email || null;
-              if (email) { 
-                try { localStorage.setItem('foundation_user_email', email); } catch {} 
-                try { sessionStorage.setItem('foundation_user_email', email); } catch {} 
-                setCurrentEmail(email); 
+        // 6. 尝试通过HRSaaS API获取最新用户信息（异步，不阻塞UI）
+        if (token) {
+          try {
+            console.log('尝试通过HRSaaS API获取最新用户信息');
+            const newUserInfo = await fetchUserInfoFromHRSaaS(token);
+            
+            if (newUserInfo) {
+              // 更新状态
+              setCurrentUserName(newUserInfo.nickname || newUserInfo.name);
+              if (newUserInfo.foundation_user_role) {
+                setCurrentRole(newUserInfo.foundation_user_role);
               }
-              try { localStorage.setItem('foundation_user_groups', JSON.stringify(groups)); } catch {}
-              try { sessionStorage.setItem('foundation_user_groups', JSON.stringify(groups)); } catch {}
-              setCurrentGroups(groups);
-              const scope = (data.scope || (data.raw && data.raw.scope) || null);
-              if (scope) { 
-                try { localStorage.setItem('foundation_user_scope', String(scope)); } catch {} 
-                try { sessionStorage.setItem('foundation_user_scope', String(scope)); } catch {} 
-                setCurrentScope(String(scope)); 
+              if (newUserInfo.foundation_user_permissions) {
+                setCurrentPermissions(newUserInfo.foundation_user_permissions);
+              }
+              
+              // 加载额外的用户信息
+              const savedEmail = storageService.getItem('foundation_user_email');
+              const savedGroupsStr = storageService.getItem('foundation_user_groups');
+              
+              if (savedEmail) setCurrentEmail(savedEmail);
+              if (savedGroupsStr) {
+                try {
+                  const groups = JSON.parse(savedGroupsStr);
+                  if (Array.isArray(groups)) {
+                    setCurrentGroups(groups);
+                  }
+                } catch (e) {
+                  console.warn('解析群组信息失败:', e);
+                }
+              }
+              
+              console.log('通过HRSaaS API成功获取最新用户信息');
+              setIsLoginDialogOpen(false);
+            } else {
+              // 如果userInfo为null，可能是401错误，显示前端提示
+              console.error('HRSaaS API调用失败：未返回用户信息');
+              // 假设有toast.error可以使用
+              if (typeof toast !== 'undefined' && toast.error) {
+                toast.error('认证信息已过期，请重新登录');
               }
             }
-            setIsLoginDialogOpen(false);
+          } catch (error) {
+            console.warn('HRSaaS API调用失败，继续使用缓存的用户信息:', error);
+            // 不抛出错误，允许应用继续使用缓存的用户信息
           }
-        } catch (error) {
-          console.error('getAuthMe调用失败，但继续使用本地缓存的用户信息:', error);
-          // 失败时继续使用已加载的本地信息，不影响用户体验
         }
+        
+        // 失败时继续使用已加载的本地信息，不影响用户体验
+        // 失败时继续使用已加载的本地信息，不影响用户体验
       } catch (error) {
         console.error('初始化用户信息时发生错误:', error);
       }
