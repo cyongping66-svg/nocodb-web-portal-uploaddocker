@@ -18,7 +18,7 @@ import { DataTable } from '@/components/DataTable';
 import { CardView } from '@/components/CardView';
 import { apiService } from '@/lib/api';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
-import { storageService, getUserInfo, fetchUserInfoFromHRSaaS } from '@/lib/auth';
+import { storageService, getUserInfo, fetchUserInfoFromHRSaaS, isTokenValid } from '@/lib/auth';
 
 function App() {
   const { 
@@ -155,9 +155,15 @@ function App() {
       const codeChallenge = base64url(new Uint8Array(digest));
       const state = base64url(randomBytes(16));
 
-      sessionStorage.setItem('oidc_state', state);
-      sessionStorage.setItem('oidc_verifier', codeVerifier);
-      sessionStorage.setItem('oidc_return_to', window.location.href);
+      // 同时保存到sessionStorage和localStorage，增加冗余避免丢失
+      try { sessionStorage.setItem('oidc_state', state); } catch (e) { console.warn('Failed to save oidc_state to sessionStorage:', e); }
+      try { localStorage.setItem('oidc_state', state); } catch (e) { console.warn('Failed to save oidc_state to localStorage:', e); }
+      
+      try { sessionStorage.setItem('oidc_verifier', codeVerifier); } catch (e) { console.warn('Failed to save oidc_verifier to sessionStorage:', e); }
+      try { localStorage.setItem('oidc_verifier', codeVerifier); } catch (e) { console.warn('Failed to save oidc_verifier to localStorage:', e); }
+      
+      try { sessionStorage.setItem('oidc_return_to', window.location.href); } catch (e) { console.warn('Failed to save oidc_return_to to sessionStorage:', e); }
+      try { localStorage.setItem('oidc_return_to', window.location.href); } catch (e) { console.warn('Failed to save oidc_return_to to localStorage:', e); }
 
       const u = new URL(AUTHORIZE_URL);
       u.searchParams.set('client_id', CLIENT_ID);
@@ -244,12 +250,31 @@ function App() {
         const state = params.get('state');
         if (!code) return;
 
-        const expectedState = sessionStorage.getItem('oidc_state');
+        // 同时从sessionStorage和localStorage获取state，优先使用sessionStorage
+        const expectedState = sessionStorage.getItem('oidc_state') || localStorage.getItem('oidc_state');
         if (expectedState && state && state !== expectedState) {
+          console.warn('OIDC回调state不匹配');
           toast.error('OIDC 回調 state 不匹配');
+          // 清除可能不一致的状态数据
+          try { sessionStorage.removeItem('oidc_state'); localStorage.removeItem('oidc_state'); } catch {} 
           return;
         }
-        const codeVerifier = sessionStorage.getItem('oidc_verifier') || '';
+        // 同时从sessionStorage和localStorage获取code_verifier，优先使用sessionStorage
+        const codeVerifier = sessionStorage.getItem('oidc_verifier') || localStorage.getItem('oidc_verifier') || '';
+        
+        // 如果codeVerifier为空，提示错误并引导用户重新登录
+        if (!codeVerifier) {
+          console.error('Missing code_verifier for OIDC token exchange');
+          toast.error('认证信息不完整，请重新登录');
+          // 清除可能不一致的状态数据
+          try { 
+            sessionStorage.removeItem('oidc_state'); 
+            localStorage.removeItem('oidc_state');
+            sessionStorage.removeItem('oidc_verifier'); 
+            localStorage.removeItem('oidc_verifier');
+          } catch {} 
+          return;
+        }
         const REDIRECT_URI = 'http://localhost:5000';
         const CLIENT_ID = '932647bf-39db-4991-8589-09bdb4074d2b';
 
@@ -325,9 +350,12 @@ function App() {
 
         // 清理暫存 & 還原網址
         try {
+          // 同时清理sessionStorage和localStorage中的OIDC状态
           sessionStorage.removeItem('oidc_state');
+          localStorage.removeItem('oidc_state');
           sessionStorage.removeItem('oidc_verifier');
-          const returnTo = sessionStorage.getItem('oidc_return_to');
+          localStorage.removeItem('oidc_verifier');
+          const returnTo = sessionStorage.getItem('oidc_return_to') || localStorage.getItem('oidc_return_to');
           if (returnTo) {
             sessionStorage.removeItem('oidc_return_to');
             window.history.replaceState(null, '', returnTo);
@@ -339,83 +367,161 @@ function App() {
           }
         } catch {}
 
-        // 初始化用户信息
+        // 初始化用户信息：优先从HRSaaS API获取完整用户信息
         try {
-          // 使用顶部已经导入的storageService
+          let userInfo = null;
           
-          // 从accessToken中提取用户标识（如果有）或使用默认值
-          let userName: string = '';
-          interface TokenData {
-            name?: string;
-            preferred_username?: string;
-            email?: string;
-            sub?: string | number;
-            company?: string;
-            department?: string;
-            group?: string;
-            position?: string;
-            supervisor?: string;
-            role?: string;
-            permissions?: string[];
-            groups?: string[];
-            scope?: string;
-          }
-          let userData: TokenData = {};
+          // 根据PRD要求，必须从HRSaaS API获取用户信息，而不是从token解析
           if (accessToken) {
+            console.log('OIDC登录成功，开始从HRSaaS API获取用户信息...');
+            console.log('Token type:', accessToken.split('.').length === 3 ? 'JWT' : '可能是opaque token');
+            
             try {
-              // 尝试从JWT token中提取信息（如果格式正确）
-              const tokenParts = accessToken.split('.');
-              if (tokenParts.length === 3) {
-                const decoded = JSON.parse(atob(tokenParts[1])) as TokenData;
-                userName = decoded.name || decoded.preferred_username || decoded.email || (decoded.sub ? String(decoded.sub).slice(0, 8) : '');
-                userData = decoded; // 保存完整的token数据
+              // 调用HRSaaS API获取完整的用户信息
+              // 注意：即使token不是JWT格式，我们也尝试调用API
+              userInfo = await fetchUserInfoFromHRSaaS(accessToken);
+              if (userInfo) {
+                console.log('成功从HRSaaS API获取用户信息:', userInfo.nickname || userInfo.name);
+                
+                // 更新组件状态
+                setCurrentUserName(userInfo.nickname || userInfo.name);
+                setCurrentRole(userInfo.foundation_user_role || 'user');
+                setCurrentPermissions(userInfo.foundation_user_permissions || []);
+                
+                // 获取并设置groups和scope（如果HRSaaS返回了这些信息）
+                const savedGroupsStr = storageService.getItem('foundation_user_groups');
+                if (savedGroupsStr) {
+                  try {
+                    const groups = JSON.parse(savedGroupsStr);
+                    if (Array.isArray(groups)) {
+                      setCurrentGroups(groups);
+                    }
+                  } catch (e) {
+                    console.warn('解析群组信息失败:', e);
+                  }
+                }
+                const savedScope = storageService.getItem('foundation_user_scope');
+                if (savedScope) setCurrentScope(savedScope);
+                
+                console.log('OIDC登录成功，已从HRSaaS API获取并初始化用户信息');
+              } else {
+                // 检查是否是401错误
+                const lastErrorStr = storageService.getItem('last_api_error');
+                let is401Error = false;
+                if (lastErrorStr) {
+                  try {
+                    const lastError = JSON.parse(lastErrorStr);
+                    if (lastError.code === 401) {
+                      is401Error = true;
+                      console.error('HRSaaS API返回401，token无效');
+                      toast.error('認證失敗：token無效，請重新登錄');
+                    }
+                  } catch (e) {
+                    // 忽略解析错误
+                  }
+                }
+                
+                if (!is401Error) {
+                  console.warn('从HRSaaS API获取用户信息失败，将使用id_token中的基本信息');
+                  // 回退方案：从id_token中提取基本信息（仅作为临时方案）
+                  throw new Error('HRSaaS API failed');
+                }
               }
-            } catch (e) {
-              console.warn('解析token获取用户信息失败:', e);
+            } catch (hrsaasError) {
+              // 只有在不是401错误时才使用回退方案
+              const lastErrorStr = storageService.getItem('last_api_error');
+              let is401Error = false;
+              if (lastErrorStr) {
+                try {
+                  const lastError = JSON.parse(lastErrorStr);
+                  if (lastError.code === 401) {
+                    is401Error = true;
+                  }
+                } catch (e) {
+                  // 忽略解析错误
+                }
+              }
+              
+              if (is401Error) {
+                console.error('HRSaaS API返回401，无法获取用户信息');
+                toast.error('認證失敗：無法獲取用戶信息，請重新登錄');
+                return; // 不继续处理
+              }
+              
+              console.error('从HRSaaS API获取用户信息失败:', hrsaasError);
+              // 回退方案：从id_token中提取基本信息（仅作为临时方案）
+              console.warn('使用id_token中的基本信息作为回退方案');
+              let userName: string = '';
+              interface TokenData {
+                name?: string;
+                preferred_username?: string;
+                email?: string;
+                sub?: string | number;
+                groups?: string[];
+                scope?: string;
+              }
+              let userData: TokenData = {};
+              if (idToken) {
+                try {
+                  const tokenParts = idToken.split('.');
+                  if (tokenParts.length === 3) {
+                    const decoded = JSON.parse(base64urlDecode(tokenParts[1])) as TokenData;
+                    userName = decoded.name || decoded.preferred_username || decoded.email || (decoded.sub ? String(decoded.sub).slice(0, 8) : '');
+                    userData = decoded;
+                  }
+                } catch (e) {
+                  console.warn('解析id_token获取用户信息失败:', e);
+                }
+              }
+              
+              if (!userName) {
+                userName = 'user_' + Date.now().toString(36).substr(2, 9);
+              }
+              
+              // 构建临时用户信息对象
+              userInfo = {
+                id: String(userData.sub || ''),
+                name: userName,
+                nickname: userName,
+                company_name: 'Unknown',
+                department_name: 'Unknown',
+                group_name: 'Unknown',
+                position_name: 'Unknown',
+                supervisor_nickname: 'Unknown',
+                supervisor_name: 'Unknown',
+                foundation_user_role: 'user',
+                foundation_user_permissions: Array.isArray(userData.groups) && userData.groups.includes('permission-admin') ? ['admin.manage'] : [],
+                admin_login_method: 'oidc'
+              };
+              
+              // 保存临时用户信息
+              if (storageService) {
+                storageService.setItem('userInfo', JSON.stringify(userInfo));
+                storageService.setItem('currentUserName', userInfo.nickname || userInfo.name);
+                storageService.setItem('foundation_user_name', userInfo.nickname || userInfo.name);
+                storageService.setItem('foundation_user_role', userInfo.foundation_user_role || 'user');
+                storageService.setItem('foundation_user_permissions', JSON.stringify(userInfo.foundation_user_permissions || []));
+                if (Array.isArray(userData.groups)) {
+                  storageService.setItem('foundation_user_groups', JSON.stringify(userData.groups));
+                  setCurrentGroups(userData.groups);
+                }
+                if (userData.scope) {
+                  storageService.setItem('foundation_user_scope', String(userData.scope));
+                  setCurrentScope(String(userData.scope));
+                }
+              }
+              
+              // 更新组件状态
+              setCurrentUserName(userInfo.nickname || userInfo.name);
+              setCurrentRole(userInfo.foundation_user_role || 'user');
+              setCurrentPermissions(userInfo.foundation_user_permissions || []);
+              
+              toast.warning('無法從HRSaaS獲取完整用戶信息，已使用基本信息');
             }
+          } else {
+            console.error('Access token缺失，無法獲取用戶信息');
+            toast.error('認證失敗：未獲取到access token');
           }
-          
-          // 如果无法从token获取，使用一个基于时间的唯一标识
-          if (!userName) {
-            userName = 'user_' + Date.now().toString(36).substr(2, 9);
-          }
-          
-          // 构建标准格式的用户信息对象
-          const userInfo = {
-            id: String(userData.sub || ''),
-            name: userName,
-            nickname: userName,
-            company_name: String(userData.company || ''),
-            department_name: String(userData.department || ''),
-            group_name: String(userData.group || ''),
-            position_name: String(userData.position || ''),
-            supervisor_nickname: String(userData.supervisor || ''),
-            supervisor_name: String(userData.supervisor || ''),
-            foundation_user_role: String(userData.role || 'user'),
-            foundation_user_permissions: Array.isArray(userData.permissions) ? userData.permissions : (Array.isArray(userData.groups) && userData.groups?.includes('permission-admin') ? ['admin.manage'] : []),
-            admin_login_method: 'oidc'
-          };
-          
-          // 使用统一的存储服务保存用户信息
-          if (storageService) {
-            storageService.setItem('userInfo', JSON.stringify(userInfo));
-            storageService.setItem('currentUserName', userInfo.nickname || userInfo.name);
-            storageService.setItem('foundation_user_name', userInfo.nickname || userInfo.name);
-            storageService.setItem('foundation_user_role', userInfo.foundation_user_role || 'user');
-            storageService.setItem('foundation_user_permissions', JSON.stringify(userInfo.foundation_user_permissions || []));
-            storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(userData.groups) ? userData.groups : []));
-            storageService.setItem('foundation_user_scope', String(userData.scope || ''));
-          }
-          
-          // 更新组件状态
-          setCurrentUserName(userInfo.nickname || userInfo.name);
-          setCurrentRole(userInfo.foundation_user_role || 'user');
-          setCurrentPermissions(userInfo.foundation_user_permissions || []);
-          setCurrentGroups(Array.isArray(userData.groups) ? userData.groups : []);
-          setCurrentScope(String(userData.scope || ''));
-          
-          console.log('OIDC登录成功，已初始化用户信息:', userInfo);
-          console.log('Token已保存到localStorage和sessionStorage');
           
           // 同步存储数据
           if (storageService && storageService.syncStorage) {
@@ -423,6 +529,7 @@ function App() {
           }
         } catch (e) {
           console.error('初始化用户信息失败:', e);
+          toast.error('初始化用户信息失败: ' + (e instanceof Error ? e.message : String(e)));
         }
 
         toast.success('OIDC 登入成功');
@@ -468,50 +575,30 @@ function App() {
         // 2. 获取用户信息
         let userInfo = getUserInfo();
         let savedName = storageService.getItem('currentUserName') || storageService.getItem('foundation_user_name');
-        
-        // 3. 核心问题处理：如果有token但没有用户信息，尝试从token重建用户信息
+        debugger
+        // 3. 核心问题处理：如果有token但没有用户信息，先检查token有效性，再从HRSaaS API获取用户信息
         if (token && !userInfo && !savedName) {
-          console.warn('检测到有token但无用户信息，尝试从token重建');
+          console.warn('检测到有token但无用户信息，先检查token有效性');
           try {
-            // 尝试从token重建用户信息
-            const tokenParts = token.split('.');
-            if (tokenParts.length === 3) {
-              const decoded = JSON.parse(atob(tokenParts[1]));
-              const name = decoded.name || decoded.preferred_username || decoded.email || 
-                         ('sub' in decoded ? String(decoded.sub).slice(0, 8) : null);
-              
-              if (name) {
-                const tempUserInfo = {
-                  id: String(decoded.sub || ''),
-                  name: name,
-                  nickname: name,
-                  company_name: String(decoded.company || ''),
-                  department_name: String(decoded.department || ''),
-                  group_name: String(decoded.group || ''),
-                  position_name: String(decoded.position || ''),
-                  supervisor_nickname: String(decoded.supervisor || ''),
-                  supervisor_name: String(decoded.supervisor || ''),
-                  foundation_user_role: String(decoded.role || 'user'),
-                  foundation_user_permissions: Array.isArray(decoded.permissions) ? decoded.permissions : 
-                                             (Array.isArray(decoded.groups) && decoded.groups.includes('permission-admin') ? ['admin.manage'] : []),
-                  admin_login_method: 'oidc'
-                };
-                
-                // 保存重建的用户信息
-                storageService.setItem('userInfo', JSON.stringify(tempUserInfo));
-                storageService.setItem('currentUserName', name);
-                storageService.setItem('foundation_user_name', name);
-                storageService.setItem('foundation_user_role', tempUserInfo.foundation_user_role || 'user');
-                storageService.setItem('foundation_user_permissions', JSON.stringify(tempUserInfo.foundation_user_permissions || []));
-                storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(decoded.groups) ? decoded.groups : []));
-                
-                console.log('成功从token重建用户信息:', name);
-                savedName = name;
-                userInfo = tempUserInfo;
+            // 确保token有效
+            if (isTokenValid(token)) {
+              console.log('token有效，从HRSaaS API获取用户信息');
+              // 直接从HRSaaS API获取用户信息，不尝试从token解析
+              const fetchedUserInfo = await fetchUserInfoFromHRSaaS(token);
+              if (fetchedUserInfo) {
+                console.log('成功从HRSaaS API获取用户信息:', fetchedUserInfo.nickname || fetchedUserInfo.name);
+                savedName = fetchedUserInfo.nickname || fetchedUserInfo.name;
+                userInfo = fetchedUserInfo;
               }
+            } else {
+              console.error('token无效或已过期，无法获取用户信息');
+              toast.error('认证信息已过期，请重新登录');
+              // 清除无效的token
+              storageService.clearAuthData();
+              return;
             }
           } catch (e) {
-            console.error('从token重建用户信息失败:', e);
+            console.error('从HRSaaS API获取用户信息失败:', e);
           }
         }
         

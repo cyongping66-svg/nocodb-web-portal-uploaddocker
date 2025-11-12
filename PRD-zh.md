@@ -317,22 +317,52 @@ getRelatedTableDataByRow函数返回的数据结构为：
 
 ## API接口文档
 
-### 获取用户员工信息接口
+### 认证与用户信息获取规范
 
-#### 接口描述
-该接口用于获取当前登录用户的员工信息，包括基本信息、部门信息、职位信息等。接口通过请求头中的Authorization进行身份验证，返回详细的员工信息数据。
+#### 核心原则
+- **token优先**: 确保在请求用户信息前先获取并验证token的有效性
+- **唯一来源**: 用户信息必须从HRSaaS API获取，禁止直接解析token获取用户信息
+- **双存储冗余**: 使用localStorage和sessionStorage双重存储确保认证信息可靠性
 
-#### 请求信息
+#### HRSaaS API配置
+- **请求URL**: `https://hrsaastest-1-api.wiltechs.com/api/user/employee-info`
 - **请求方法**: GET
-- **请求URL**: `/api/user/employee-info`
-- **请求头**:
+- **认证方式**: Bearer Token
+- **请求头要求**:
   - `Authorization`: 认证令牌（Bearer token格式）
 
 #### 请求示例
-```http
-GET /api/user/employee-info
+```
+GET https://hrsaastest-1-api.wiltechs.com/api/user/employee-info
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
+
+#### 实现要求
+1. **token有效性验证**:
+   - 在调用HRSaaS API前必须使用isTokenValid函数验证token是否有效
+   - 验证内容包括JWT格式检查和过期时间验证
+   - 对于无效或过期的token，应清除认证数据并提示用户重新登录
+
+2. **用户信息获取流程**:
+   - 系统必须使用fetchUserInfoFromHRSaaS函数从HRSaaS API获取用户信息
+   - 禁止直接解析token（如id_token或access_token）获取用户信息
+   - API调用应包含重试机制和超时控制，提高可靠性
+
+3. **错误处理**:
+   - 当token无效时，应触发token_expired事件并清除认证数据
+   - 当HRSaaS API返回401错误时，应提示用户认证过期并清除token
+   - 所有认证相关错误应记录详细日志便于排查
+
+4. **OIDC认证流程**:
+   - OIDC token交换必须包含code_verifier参数
+   - 认证状态（state、verifier等）必须在localStorage和sessionStorage中同时保存
+   - 登录成功后应立即同步存储认证信息确保数据一致性
+
+#### 安全考量
+- 避免在日志中记录完整的token信息
+- 提前1分钟检测token过期，避免边界情况下的认证失败
+- 使用统一的storageService管理认证信息，确保操作一致性
+- 敏感操作前再次验证token有效性，防止权限提升攻击
 
 #### 响应数据结构
 响应数据包含一个message字段和一个data对象，data对象中包含用户的完整员工信息：

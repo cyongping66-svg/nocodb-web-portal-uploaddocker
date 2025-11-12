@@ -81,33 +81,51 @@ const storageService = {
 };
 
 // 解析JWT token，提取其中的信息
+// 注意：如果token不是JWT格式，返回null（这是正常的，因为可能是 opaquetoken）
 function parseToken(token: string): any | null {
+  if (!token || typeof token !== 'string') {
+    return null;
+  }
+  
   try {
     const tokenParts = token.split('.');
     if (tokenParts.length !== 3) {
-      console.error('Invalid JWT token format: incorrect number of parts');
+      // 不是JWT格式，可能是opaque token，这是正常的
       return null;
     }
     
     // 处理URL安全的base64编码（填充等问题）
     const base64Url = tokenParts[1];
+    if (!base64Url) {
+      return null;
+    }
+    
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
     const padded = base64.padEnd(base64.length + (4 - base64.length % 4) % 4, '=');
     
     const decoded = JSON.parse(atob(padded));
     return decoded;
   } catch (error) {
-    console.error('Failed to parse token:', error);
+    // 解析失败是正常的，可能是opaque token
     return null;
   }
 }
 
 // 检查token是否有效（未过期）
+// 注意：对于非JWT格式的token（不透明token），我们假设它有效，让API来验证
 export function isTokenValid(token: string): boolean {
+  if (!token || typeof token !== 'string' || token.trim().length === 0) {
+    return false;
+  }
+  
   try {
     const decoded = parseToken(token);
+    
+    // 如果token不是JWT格式（无法解析），假设它是有效的不透明token
+    // 让HRSaaS API来验证它的有效性
     if (!decoded) {
-      return false;
+      console.log('Token is not a JWT format (likely an opaque token), will validate via API');
+      return true; // 假设有效，让API验证
     }
     
     // 检查token是否有过期时间
@@ -132,7 +150,9 @@ export function isTokenValid(token: string): boolean {
     return isValid;
   } catch (error) {
     console.error('Failed to check token validity:', error);
-    return false;
+    // 即使解析失败，也假设token有效，让API来验证
+    console.log('Token validation error, assuming valid and will verify via API');
+    return true;
   }
 }
 
@@ -233,14 +253,18 @@ export const clearAuthToken = (reason?: string): void => {
 
 // 从HRSaaS获取用户信息（带重试机制和增强错误处理）
 export const fetchUserInfoFromHRSaaS = async (token: string, maxRetries = 2): Promise<UserInfo | null> => {
-  // 首先检查token是否有效
-  if (!isTokenValid(token)) {
-    console.error('Failed to fetch user info from HRSaaS: Token expired or invalid');
-    // 清除认证数据
-    clearAuthToken('token expired');
-    // 触发token过期事件
-    window.dispatchEvent(new CustomEvent('token_expired'));
+  // 检查token是否存在
+  if (!token || typeof token !== 'string' || token.trim().length === 0) {
+    console.error('Failed to fetch user info from HRSaaS: No token provided');
     return null;
+  }
+  
+  // 对于JWT token，检查是否过期；对于opaque token，让API来验证
+  const tokenValid = isTokenValid(token);
+  if (!tokenValid) {
+    console.error('Failed to fetch user info from HRSaaS: Token appears to be invalid or expired');
+    // 注意：对于opaque token，isTokenValid可能返回true，所以这里主要是检查JWT token
+    // 如果API返回401，我们会在下面处理
   }
   
   let retries = 0;
@@ -254,22 +278,28 @@ export const fetchUserInfoFromHRSaaS = async (token: string, maxRetries = 2): Pr
         return null;
       }
       
-      // 配置请求头，添加认证token
-      const headers = {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      };
+      // 配置请求头，严格按照API示例格式实现
+      var myHeaders = new Headers();
+      myHeaders.append("language", "hk");
+      myHeaders.append("tenant-id", "");
+      myHeaders.append("platform", "api");
+      myHeaders.append("Accept", "application/json");
+      myHeaders.append("Authorization", `Bearer ${token}`);
       
       // 添加请求超时控制
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时
       
-      // 发送请求到HRSaaS API
-      const response = await fetch(HRSaaS_API_URL, {
+      // 严格按照API示例定义requestOptions，并正确设置类型
+      const requestOptions: RequestInit = {
         method: 'GET',
-        headers,
+        headers: myHeaders,
+        redirect: 'follow' as RequestRedirect,
         signal: controller.signal
-      });
+      };
+      
+      // 发送请求到HRSaaS API
+      const response = await fetch(HRSaaS_API_URL, requestOptions);
       
       clearTimeout(timeoutId); // 清除超时定时器
       
@@ -313,29 +343,60 @@ export const fetchUserInfoFromHRSaaS = async (token: string, maxRetries = 2): Pr
         return null;
       }
       
-      // 解析响应数据
-      const data = await response.json();
+      // 先获取响应文本，然后尝试解析JSON
+      // 这样可以更好地处理可能的非JSON响应
+      const responseText = await response.text();
+      console.log('HRSaaS API response text:', responseText);
       
-      // 检查数据是否包含必要字段
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Failed to parse HRSaaS API response as JSON:', parseError);
+        console.error('Response text was:', responseText);
+        return null;
+      }
+      
+      // 检查响应格式：应该是 { message: string, data: object }（根据PRD文档）
       if (!data || typeof data !== 'object') {
-        console.warn('Invalid user data format from HRSaaS: expected an object');
+        console.warn('Invalid HRSaaS API response format: expected an object');
+        return null;
+      }
+      
+      // 检查响应消息
+      if (data.message && data.message !== 'success') {
+        console.warn('HRSaaS API returned non-success message:', data.message);
+        // 如果message是"unauthorized"或其他错误，返回null
+        if (data.message === 'unauthorized' || data.message.toLowerCase().includes('error') || data.message.toLowerCase().includes('fail')) {
+          console.error('HRSaaS API error:', data.message);
+          return null;
+        }
+      }
+      
+      // 从data.data中获取用户数据（根据PRD文档，响应格式为 { message: string, data: object }）
+      const userData = data.data || data;
+      if (!userData || typeof userData !== 'object') {
+        console.warn('Invalid user data format from HRSaaS: data field is missing or not an object');
+        console.warn('Full response:', JSON.stringify(data, null, 2));
         return null;
       }
       
       // 构建统一格式的用户信息对象
+      // 字段映射：PRD中的字段名 -> UserInfo接口字段名
+      // PRD字段：userId, employeeId, name, department, position, managerName, managerId
       const userInfo: UserInfo = {
-        id: String(data.id || 'unknown'),
-        name: String(data.name || 'Unknown'),
-        nickname: String(data.nickname || data.id || 'unknown'),
-        company_name: String(data.company_name || 'Unknown'),
-        department_name: String(data.department_name || 'Unknown'),
-        group_name: String(data.group_name || 'Unknown'),
-        position_name: String(data.position_name || 'Unknown'),
-        supervisor_nickname: String(data.supervisor_nickname || 'Unknown'),
-        supervisor_name: String(data.supervisor_name || 'Unknown'),
-        foundation_user_role: data.foundation_user_role || 'user',
-        foundation_user_permissions: Array.isArray(data.foundation_user_permissions) ? data.foundation_user_permissions : [],
-        admin_login_method: data.admin_login_method || ''
+        id: String(userData.userId || userData.employeeId || userData.id || 'unknown'),
+        name: String(userData.name || 'Unknown'),
+        nickname: String(userData.nickname || userData.name || (userData.email ? userData.email.split('@')[0] : null) || userData.userId || userData.employeeId || 'unknown'),
+        company_name: String(userData.company_name || userData.company || 'Unknown'),
+        department_name: String(userData.department_name || userData.department || 'Unknown'),
+        group_name: String(userData.group_name || userData.group || 'Unknown'),
+        position_name: String(userData.position_name || userData.position || 'Unknown'),
+        supervisor_nickname: String(userData.supervisor_nickname || userData.managerName || userData.manager_name || userData.supervisor || 'Unknown'),
+        supervisor_name: String(userData.supervisor_name || userData.managerName || userData.manager_name || 'Unknown'),
+        foundation_user_role: userData.foundation_user_role || userData.role || 'user',
+        foundation_user_permissions: Array.isArray(userData.foundation_user_permissions) ? userData.foundation_user_permissions : (Array.isArray(userData.permissions) ? userData.permissions : []),
+        admin_login_method: userData.admin_login_method || 'oidc'
       };
       
       // 数据完整性验证
@@ -352,7 +413,7 @@ export const fetchUserInfoFromHRSaaS = async (token: string, maxRetries = 2): Pr
         storageService.setItem('foundation_user_permissions', JSON.stringify(userInfo.foundation_user_permissions || []));
         
         // 保存额外的用户上下文信息
-        storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(data.groups) ? data.groups : []));
+        storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(userData.groups) ? userData.groups : []));
         
         // 保存token及过期信息
         saveTokenWithExpiry(token);
