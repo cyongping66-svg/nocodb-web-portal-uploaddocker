@@ -278,28 +278,22 @@ export const fetchUserInfoFromHRSaaS = async (token: string, maxRetries = 2): Pr
         return null;
       }
       
-      // 配置请求头，严格按照API示例格式实现
-      var myHeaders = new Headers();
-      myHeaders.append("language", "hk");
-      myHeaders.append("tenant-id", "");
-      myHeaders.append("platform", "api");
-      myHeaders.append("Accept", "application/json");
-      myHeaders.append("Authorization", `Bearer ${token}`);
+      // 配置请求头，添加认证token
+      const headers = {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      };
       
       // 添加请求超时控制
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时
       
-      // 严格按照API示例定义requestOptions，并正确设置类型
-      const requestOptions: RequestInit = {
-        method: 'GET',
-        headers: myHeaders,
-        redirect: 'follow' as RequestRedirect,
-        signal: controller.signal
-      };
-      
       // 发送请求到HRSaaS API
-      const response = await fetch(HRSaaS_API_URL, requestOptions);
+      const response = await fetch(HRSaaS_API_URL, {
+        method: 'GET',
+        headers,
+        signal: controller.signal
+      });
       
       clearTimeout(timeoutId); // 清除超时定时器
       
@@ -343,19 +337,8 @@ export const fetchUserInfoFromHRSaaS = async (token: string, maxRetries = 2): Pr
         return null;
       }
       
-      // 先获取响应文本，然后尝试解析JSON
-      // 这样可以更好地处理可能的非JSON响应
-      const responseText = await response.text();
-      console.log('HRSaaS API response text:', responseText);
-      
-      let data;
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('Failed to parse HRSaaS API response as JSON:', parseError);
-        console.error('Response text was:', responseText);
-        return null;
-      }
+      // 解析响应数据
+      const data = await response.json();
       
       // 检查响应格式：应该是 { message: string, data: object }（根据PRD文档）
       if (!data || typeof data !== 'object') {
