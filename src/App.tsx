@@ -1606,8 +1606,8 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
                   <DialogTitle>登入</DialogTitle>
                 </DialogHeader>
                 <div className="space-y-3">
-                  <div className="text-sm text-muted-foreground">請使用 OIDC 帳號驗證登入，或以管理員密碼登入。</div>
-                  <Button onClick={startOidcLogin} className="w-full">使用 OIDC 登入</Button>
+                  <div className="text-sm text-muted-foreground">請使用 OMEOFFICE 帳號驗證登入，或以管理員密碼登入。</div>
+                  <Button onClick={startOidcLogin} className="w-full">使用 OMEOFFICE 登入</Button>
                   <div className="space-y-2 pt-2">
                     <Label htmlFor="adminPassword">管理員密碼</Label>
                     <Input id="adminPassword" type="password" placeholder="輸入管理員密碼" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
