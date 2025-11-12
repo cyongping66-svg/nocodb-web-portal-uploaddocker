@@ -36,6 +36,58 @@ function App() {
     refresh
   } = useTables();
   
+  // 从缓存获取用户信息的函数
+  const loadCachedUserInfo = () => {
+    try {
+      const cachedUserInfo = getUserInfo();
+      if (cachedUserInfo) {
+        // 更新组件状态为缓存的用户信息
+        setCurrentUserName(cachedUserInfo.nickname || cachedUserInfo.name);
+        setCurrentRole(cachedUserInfo.foundation_user_role || 'user');
+        setCurrentPermissions(cachedUserInfo.foundation_user_permissions || []);
+        
+        // 同步设置其他用户信息状态
+        setCurrentUserInfo(cachedUserInfo);
+        
+        console.log('Loaded user info from cache:', cachedUserInfo);
+        return cachedUserInfo;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error loading cached user info:', error);
+      return null;
+    }
+  };
+  
+  // 获取并更新用户信息的函数
+  const updateUserInfo = async (token?: string) => {
+    // 先尝试从缓存加载
+    const cachedInfo = loadCachedUserInfo();
+    if (cachedInfo && !token) {
+      // 如果有缓存且没有新token，直接返回
+      return cachedInfo;
+    }
+    
+    // 如果提供了token，尝试从HRSaaS获取最新信息
+    if (token) {
+      try {
+        const userInfo = await fetchUserInfoFromHRSaaS(token);
+        if (userInfo) {
+          // 更新组件状态
+          setCurrentUserName(userInfo.nickname || userInfo.name);
+          setCurrentRole(userInfo.foundation_user_role || 'user');
+          setCurrentPermissions(userInfo.foundation_user_permissions || []);
+          setCurrentUserInfo(userInfo);
+          return userInfo;
+        }
+      } catch (error) {
+        console.error('Error updating user info from HRSaaS:', error);
+      }
+    }
+    
+    return cachedInfo;
+  };
+  
   const [activeTableId, setActiveTableId] = useState<string | null>('sample-employees'); // 默認使用示例表格
   const [viewMode, setViewMode] = useState<ViewMode>('grid');
   const [newTableName, setNewTableName] = useState('');
@@ -46,6 +98,8 @@ function App() {
   const [currentUserName, setCurrentUserName] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<string | null>(null);
   const [currentPermissions, setCurrentPermissions] = useState<string[]>([]);
+  // 新增：存储完整的用户信息对象
+  const [currentUserInfo, setCurrentUserInfo] = useState<any>(null);
   const canAccessPermissionSettings = (currentRole === 'admin') || currentPermissions.includes('admin.manage');
   const [isPermissionsDialogOpen, setIsPermissionsDialogOpen] = useState(false);
   const [isPermissionsSettingsOpen, setIsPermissionsSettingsOpen] = useState(false);
@@ -90,24 +144,8 @@ function App() {
   };
 
   useEffect(() => {
-    try {
-      const name = localStorage.getItem('currentUserName') || localStorage.getItem('foundation_user_name');
-      const role = localStorage.getItem('foundation_user_role');
-      const permsRaw = localStorage.getItem('foundation_user_permissions');
-      if (name) setCurrentUserName(name);
-      if (role) setCurrentRole(role);
-      if (permsRaw) {
-        try {
-          const parsed = JSON.parse(permsRaw);
-          if (Array.isArray(parsed)) setCurrentPermissions(parsed);
-          else if (typeof permsRaw === 'string' && permsRaw.includes(',')) setCurrentPermissions(permsRaw.split(',').map(s => s.trim()).filter(Boolean));
-        } catch {
-          if (typeof permsRaw === 'string' && permsRaw.includes(',')) setCurrentPermissions(permsRaw.split(',').map(s => s.trim()).filter(Boolean));
-        }
-      }
-    } catch (e) {
-      // 忽略本地存取錯誤
-    }
+    // 使用新的updateUserInfo函数加载用户信息
+    updateUserInfo();
   }, []);
 
  
@@ -342,6 +380,7 @@ function App() {
         if (accessToken) {
           try { localStorage.setItem('oidc_access_token', accessToken); } catch {}
           try { sessionStorage.setItem('oidc_access_token', accessToken); } catch {} // 同时保存到sessionStorage
+          // 用户信息将在后续代码块中从HRSaaS API获取
         }
         if (refreshToken) {
           try { localStorage.setItem('oidc_refresh_token', refreshToken); } catch {}
@@ -358,6 +397,7 @@ function App() {
           const returnTo = sessionStorage.getItem('oidc_return_to') || localStorage.getItem('oidc_return_to');
           if (returnTo) {
             sessionStorage.removeItem('oidc_return_to');
+            localStorage.removeItem('oidc_return_to');
             window.history.replaceState(null, '', returnTo);
           } else {
             const url = new URL(window.location.href);
@@ -575,7 +615,7 @@ function App() {
         // 2. 获取用户信息
         let userInfo = getUserInfo();
         let savedName = storageService.getItem('currentUserName') || storageService.getItem('foundation_user_name');
-        debugger
+       
         // 3. 核心问题处理：如果有token但没有用户信息，先检查token有效性，再从HRSaaS API获取用户信息
         if (token && !userInfo && !savedName) {
           console.warn('检测到有token但无用户信息，先检查token有效性');
@@ -1742,6 +1782,7 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
                    <DialogTitle>賬號詳情</DialogTitle>
                  </DialogHeader>
                  <div className="space-y-3 text-sm">
+                   {/* 基本信息 */}
                    <div className="flex items-center justify-between">
                      <span className="text-muted-foreground">賬號名</span>
                      <span className="font-medium">{currentUserName || '未登入'}</span>
@@ -1751,7 +1792,39 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
                      <span className="font-medium">{currentRole || '未設定'}</span>
                    </div>
                    
-                   <div>
+                   {/* 从HRSaaS获取的用户信息 */}
+                    <div className="pt-4 border-t border-border/30 rounded-md bg-card/50 p-4 mb-4">
+                      <h4 className="font-medium mb-3 text-sm font-semibold tracking-wide text-muted-foreground">組織信息</h4>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between p-2 hover:bg-muted/50 rounded-md transition-colors">
+                          <span className="text-sm text-muted-foreground">職位</span>
+                          <span className="text-sm font-medium">{currentUserInfo?.position_name || '未提供'}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 hover:bg-muted/50 rounded-md transition-colors">
+                          <span className="text-sm text-muted-foreground">小组</span>
+                          <span className="text-sm font-medium">{currentUserInfo?.group_name || '未提供'}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 hover:bg-muted/50 rounded-md transition-colors">
+                          <span className="text-sm text-muted-foreground">上级英文名</span>
+                          <span className="text-sm font-medium">{currentUserInfo?.supervisor_nickname || '未提供'}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 hover:bg-muted/50 rounded-md transition-colors">
+                          <span className="text-sm text-muted-foreground">上级姓名</span>
+                          <span className="text-sm font-medium">{currentUserInfo?.supervisor_name || '未提供'}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 hover:bg-muted/50 rounded-md transition-colors">
+                          <span className="text-sm text-muted-foreground">部門</span>
+                          <span className="text-sm font-medium">{currentUserInfo?.department_name || '未提供'}</span>
+                        </div>
+                        <div className="flex items-center justify-between p-2 hover:bg-muted/50 rounded-md transition-colors">
+                          <span className="text-sm text-muted-foreground">公司</span>
+                          <span className="text-sm font-medium">{currentUserInfo?.company_name || '未提供'}</span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                   {/* 现有信息 */}
+                   <div className="pt-2 border-t">
                      <div className="text-muted-foreground mb-1">用戶組</div>
                      {(currentGroups && currentGroups.length > 0) ? (
                        <div className="flex flex-wrap gap-2">
@@ -1767,7 +1840,7 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
                      <span className="text-muted-foreground">Scope</span>
                      <span className="font-medium">{currentScope || '未提供'}</span>
                    </div>
-                   <div>
+                   <div className="pt-2 border-t">
                      <div className="text-muted-foreground mb-1">權限</div>
                      {(currentPermissions && currentPermissions.length > 0) ? (
                        <div className="flex flex-wrap gap-2">
