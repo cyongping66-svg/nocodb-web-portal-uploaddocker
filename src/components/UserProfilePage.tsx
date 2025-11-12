@@ -16,17 +16,39 @@ const UserProfilePage: React.FC = () => {
       // 使用API服务获取用户信息
       const response = await apiService.getUserInfo();
       
-      // 假设API返回的格式是 { message: string, data: UserInfo } 结构
-      if (response && response.data) {
-        setUserInfo(response.data);
+      // 检查响应结构和数据有效性
+      if (response && typeof response === 'object') {
+        if (response.data) {
+          setUserInfo(response.data);
+        } else if (response.message) {
+          // 如果只有错误消息但没有数据，显示错误
+          setError(response.message);
+          console.error('获取用户信息失败:', response.message);
+        } else {
+          setError('获取用户信息格式错误');
+          console.error('获取用户信息格式错误:', response);
+        }
       } else {
-        setError('获取用户信息格式错误');
-        console.error('获取用户信息格式错误:', response);
+        setError('获取用户信息失败');
+        console.error('获取用户信息失败，无效响应:', response);
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '获取用户信息失败';
       setError(errorMessage);
-      console.error('获取用户信息失败:', err);
+      console.error('获取用户信息异常:', err);
+      
+      // 如果发生异常，尝试直接从auth模块获取用户信息作为后备
+      try {
+        const { getUserInfo } = await import('../lib/auth');
+        const directUserInfo = getUserInfo();
+        if (directUserInfo) {
+          setUserInfo(directUserInfo);
+          setError(null); // 清除错误，因为我们找到了有效的用户信息
+          console.log('通过auth模块直接获取到用户信息作为后备');
+        }
+      } catch (backupErr) {
+        console.error('尝试通过auth模块获取用户信息也失败:', backupErr);
+      }
     } finally {
       setLoading(false);
     }
@@ -34,14 +56,23 @@ const UserProfilePage: React.FC = () => {
 
   // 组件挂载时获取用户信息
   useEffect(() => {
-    // 检查是否有访问令牌
-    const accessToken = localStorage.getItem('oidc_access_token') || sessionStorage.getItem('oidc_access_token');
-    if (accessToken) {
-      fetchUserInfo();
-    } else {
-      setError('未登录或令牌已过期');
-      setLoading(false);
-    }
+    // 立即尝试获取用户信息，不再手动检查token（auth模块内部会处理token验证）
+    fetchUserInfo();
+    
+    // 添加页面可见性变化的事件监听，当页面从隐藏变为可见时重新获取用户信息
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        // 当页面重新可见时，刷新用户信息
+        fetchUserInfo();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // 清理函数
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   // 手动刷新用户信息

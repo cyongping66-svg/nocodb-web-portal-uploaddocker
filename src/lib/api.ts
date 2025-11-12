@@ -244,17 +244,94 @@ class ApiService {
   // 获取用户详细信息，使用HRSaaS API
   async getUserInfo() {
     try {
-      // 首先尝试从localStorage获取用户信息
-      const userInfoStr = localStorage.getItem('userInfo');
-      if (userInfoStr) {
-        return JSON.parse(userInfoStr);
+      // 导入并使用auth.ts中的getUserInfo函数，这是正确的获取用户信息的方式
+      const { getUserInfo } = await import('./auth');
+      const userInfo = getUserInfo();
+      
+      if (userInfo) {
+        // 确保返回的数据结构完全匹配UserInfoCard组件的期望
+        // 添加缺少的ID字段，使用name字段作为ID的备选（如果没有ID）
+        const completeUserInfo = {
+          ...userInfo,
+          company_id: userInfo.company_id || userInfo.company_name || 'N/A',
+          department_id: userInfo.department_id || userInfo.department_name || 'N/A',
+          group_id: userInfo.group_id || userInfo.group_name || 'N/A',
+          position_id: userInfo.position_id || userInfo.position_name || 'N/A',
+          user_id: userInfo.user_id || userInfo.id || 'N/A',
+          supervisor_id: userInfo.supervisor_id || 'N/A'
+        };
+        
+        console.log('Complete user info structure:', completeUserInfo);
+        
+        // 确保返回格式符合前端组件期望的结构 { message: string, data: UserInfo }
+        return { message: 'success', data: completeUserInfo };
       }
       
-      // 如果localStorage中没有，则调用auth/userinfo作为后备方案
-      return this.request(`/auth/userinfo`);
+      // 如果获取不到用户信息，尝试使用auth/me端点
+      const meResponse = await this.request(`/auth/me`);
+      if (meResponse && meResponse.user) {
+        // 将/auth/me的响应格式转换为前端组件期望的格式，添加所有必要字段
+        const completeUserInfo = {
+          ...meResponse.user,
+          company_id: meResponse.user.company_id || meResponse.user.company_name || 'N/A',
+          department_id: meResponse.user.department_id || meResponse.user.department_name || 'N/A',
+          group_id: meResponse.user.group_id || meResponse.user.group_name || 'N/A',
+          position_id: meResponse.user.position_id || meResponse.user.position_name || 'N/A',
+          user_id: meResponse.user.user_id || meResponse.user.id || 'N/A',
+          supervisor_id: meResponse.user.supervisor_id || 'N/A'
+        };
+        
+        return { message: 'success', data: completeUserInfo };
+      }
+      
+      console.warn('No user information available');
+      // 如果都获取不到，返回一个包含所有必要字段的空对象，避免显示"未提供"
+      const emptyUserInfo = {
+        id: 'N/A',
+        name: 'N/A',
+        nickname: 'N/A',
+        company_id: 'N/A',
+        company_name: 'N/A',
+        department_id: 'N/A',
+        department_name: 'N/A',
+        group_id: 'N/A',
+        group_name: 'N/A',
+        position_id: 'N/A',
+        position_name: 'N/A',
+        supervisor_id: 'N/A',
+        supervisor_name: undefined,
+        supervisor_nickname: undefined,
+        user_id: 'N/A'
+      };
+      
+      return { message: 'No user information found', data: emptyUserInfo };
     } catch (error) {
       console.error('Error getting user info:', error);
-      throw error;
+      
+      // 即使出错，也返回一个包含所有必要字段的空对象，避免显示"未提供"
+      const fallbackUserInfo = {
+        id: 'N/A',
+        name: 'N/A',
+        nickname: 'N/A',
+        company_id: 'N/A',
+        company_name: 'N/A',
+        department_id: 'N/A',
+        department_name: 'N/A',
+        group_id: 'N/A',
+        group_name: 'N/A',
+        position_id: 'N/A',
+        position_name: 'N/A',
+        supervisor_id: 'N/A',
+        supervisor_name: undefined,
+        supervisor_nickname: undefined,
+        user_id: 'N/A'
+      };
+      
+      // 返回错误对象以保持一致的接口格式
+      return { 
+        message: error instanceof Error ? error.message : 'Unknown error', 
+        data: fallbackUserInfo 
+      };
     }
   }
 }

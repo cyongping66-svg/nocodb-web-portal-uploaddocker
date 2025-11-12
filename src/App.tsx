@@ -421,12 +421,43 @@ function App() {
               // 注意：即使token不是JWT格式，我们也尝试调用API
               userInfo = await fetchUserInfoFromHRSaaS(accessToken);
               if (userInfo) {
-                console.log('成功从HRSaaS API获取用户信息:', userInfo.nickname || userInfo.name);
+                // 确保用户信息包含所有必要的ID字段
+                const completeUserInfo = {
+                  ...userInfo,
+                  // 确保ID字段存在
+                  user_id: userInfo.user_id || userInfo.id || '',
+                  company_id: userInfo.company_id || '',
+                  department_id: userInfo.department_id || '',
+                  group_id: userInfo.group_id || '',
+                  position_id: userInfo.position_id || '',
+                  supervisor_id: userInfo.supervisor_id || '',
+                  // 确保名称字段存在
+                  name: userInfo.name || userInfo.nickname || '用户',
+                  email: userInfo.email || '',
+                  mobile: userInfo.mobile || '',
+                  employee_id: userInfo.employee_id || '',
+                  company_name: userInfo.company_name || '未提供',
+                  department_name: userInfo.department_name || '未提供',
+                  group_name: userInfo.group_name || '未提供',
+                  position_name: userInfo.position_name || '未提供',
+                  supervisor_name: userInfo.supervisor_name || '未提供'
+                };
+                
+                // 重新保存完整的用户信息
+                try {
+                  storageService.setItem('userInfo', JSON.stringify(completeUserInfo));
+                  console.log('用户信息已保存到存储，包含所有必要字段');
+                } catch (e) {
+                  console.warn('保存完整用户信息失败:', e);
+                }
+                
+                console.log('成功从HRSaaS API获取用户信息:', completeUserInfo.nickname || completeUserInfo.name);
                 
                 // 更新组件状态
-                setCurrentUserName(userInfo.nickname || userInfo.name);
-                setCurrentRole(userInfo.foundation_user_role || 'user');
-                setCurrentPermissions(userInfo.foundation_user_permissions || []);
+                setCurrentUserName(completeUserInfo.nickname || completeUserInfo.name);
+                setCurrentRole(completeUserInfo.foundation_user_role || 'user');
+                setCurrentPermissions(completeUserInfo.foundation_user_permissions || []);
+                setCurrentUserInfo(completeUserInfo);
                 
                 // 获取并设置groups和scope（如果HRSaaS返回了这些信息）
                 const savedGroupsStr = storageService.getItem('foundation_user_groups');
@@ -518,17 +549,26 @@ function App() {
                 userName = 'user_' + Date.now().toString(36).substr(2, 9);
               }
               
-              // 构建临时用户信息对象
+              // 构建临时用户信息对象，确保包含所有必要字段
               userInfo = {
                 id: String(userData.sub || ''),
+                user_id: String(userData.sub || ''),
                 name: userName,
                 nickname: userName,
-                company_name: 'Unknown',
-                department_name: 'Unknown',
-                group_name: 'Unknown',
-                position_name: 'Unknown',
-                supervisor_nickname: 'Unknown',
-                supervisor_name: 'Unknown',
+                email: userData.email || '',
+                mobile: '',
+                employee_id: '',
+                company_id: '',
+                company_name: '未提供',
+                department_id: '',
+                department_name: '未提供',
+                group_id: '',
+                group_name: '未提供',
+                position_id: '',
+                position_name: '未提供',
+                supervisor_id: '',
+                supervisor_name: '未提供',
+                supervisor_nickname: '未提供',
                 foundation_user_role: 'user',
                 foundation_user_permissions: Array.isArray(userData.groups) && userData.groups.includes('permission-admin') ? ['admin.manage'] : [],
                 admin_login_method: 'oidc'
