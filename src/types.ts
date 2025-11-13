@@ -38,6 +38,39 @@ export interface Table {
 
 export type ViewMode = 'grid' | 'card';
 
+// 用户信息接口
+export interface UserInfo {
+  // 基本信息
+  id?: string;
+  user_id?: string;
+  name?: string;
+  nickname?: string;
+  email?: string;
+  mobile?: string;
+  employee_id?: string;
+  
+  // 组织信息
+  company_id?: string;
+  company_name?: string;
+  department_id?: string;
+  department_name?: string;
+  group_id?: string;
+  group_name?: string;
+  position_id?: string;
+  position_name?: string;
+  supervisor_id?: string;
+  supervisor_name?: string;
+  
+  // 权限信息
+  role?: string;
+  permissions?: string[];
+  foundation_user_role?: string;
+  foundation_user_permissions?: string[];
+  
+  // 其他可能的字段
+  [key: string]: any;
+}
+
 // 关联数据缓存接口
 export interface RelationCache {
   [key: string]: { // 格式: tableId_columnId_rowId

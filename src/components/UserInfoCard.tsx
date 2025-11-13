@@ -1,5 +1,4 @@
 import React from 'react';
-import { Card, CardContent, Typography, Divider, Box } from '@mui/material';
 
 interface UserInfoData {
   company_name?: string;
@@ -23,9 +22,10 @@ interface UserInfoData {
 interface UserInfoCardProps {
   userInfo?: UserInfoData | null;
   title?: string;
+  loading?: boolean;
 }
 
-const UserInfoCard: React.FC<UserInfoCardProps> = ({ userInfo, title = '用户基本信息' }) => {
+const UserInfoCard: React.FC<UserInfoCardProps> = ({ userInfo, title = '用户基本信息', loading }) => {
   // 添加空值处理函数
   const getDisplayValue = (value: any): string => {
     if (value === null || value === undefined || value === '') {
@@ -34,68 +34,122 @@ const UserInfoCard: React.FC<UserInfoCardProps> = ({ userInfo, title = '用户�
     return String(value);
   };
 
+  // CSS样式
+  const cardStyle = {
+    marginBottom: '16px',
+    border: '1px solid #e0e0e0',
+    borderRadius: '4px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+  };
+  
+  const cardContentStyle = {
+    padding: '16px'
+  };
+  
+  const titleStyle = {
+    fontSize: '1.25rem',
+    fontWeight: 500,
+    marginBottom: '16px'
+  };
+  
+  const dividerStyle = {
+    border: 'none',
+    height: '1px',
+    backgroundColor: '#e0e0e0',
+    marginBottom: '16px'
+  };
+  
+  const gridStyle = {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '16px'
+  };
+  
+  const itemStyle = {
+    marginBottom: '8px'
+  };
+  
+  const labelStyle = {
+    fontSize: '0.875rem',
+    color: '#616161',
+    marginBottom: '4px'
+  };
+  
+  const valueStyle = {
+    fontSize: '1rem'
+  };
+  
+  const emptyStyle = {
+    color: '#616161'
+  };
+
+  if (loading) {
+    return (
+      <div style={cardStyle}>
+        <div style={cardContentStyle}>
+          <div style={titleStyle}>{title}</div>
+          <div style={emptyStyle}>加载中...</div>
+        </div>
+      </div>
+    );
+  }
+
   if (!userInfo) {
     return (
-      <Card sx={{ mb: 2 }}>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>
-            {title}
-          </Typography>
-          <Typography color="textSecondary">
-            暂无用户信息
-          </Typography>
-        </CardContent>
-      </Card>
+      <div style={cardStyle}>
+        <div style={cardContentStyle}>
+          <div style={titleStyle}>{title}</div>
+          <div style={emptyStyle}>暂无用户信息</div>
+        </div>
+      </div>
     );
   }
 
   return (
-    <Card sx={{ mb: 2 }}>
-      <CardContent>
-        <Typography variant="h6" gutterBottom>
-          {title}
-        </Typography>
-        <Divider sx={{ mb: 2 }} />
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
-          <Box>
-            <Typography variant="subtitle2" color="textSecondary">姓名</Typography>
-            <Typography>{getDisplayValue(userInfo.name)}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" color="textSecondary">邮箱</Typography>
-            <Typography>{getDisplayValue(userInfo.email)}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" color="textSecondary">手机号</Typography>
-            <Typography>{getDisplayValue(userInfo.mobile)}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" color="textSecondary">工号</Typography>
-            <Typography>{getDisplayValue(userInfo.employee_id)}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" color="textSecondary">公司</Typography>
-            <Typography>{getDisplayValue(userInfo.company_name)}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" color="textSecondary">部门</Typography>
-            <Typography>{getDisplayValue(userInfo.department_name)}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" color="textSecondary">组别</Typography>
-            <Typography>{getDisplayValue(userInfo.group_name)}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" color="textSecondary">职位</Typography>
-            <Typography>{getDisplayValue(userInfo.position_name)}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" color="textSecondary">直接上级</Typography>
-            <Typography>{getDisplayValue(userInfo.supervisor_name)}</Typography>
-          </Box>
-        </Box>
-      </CardContent>
-    </Card>
+    <div style={cardStyle}>
+      <div style={cardContentStyle}>
+        <div style={titleStyle}>{title}</div>
+        <hr style={dividerStyle} />
+        <div style={gridStyle}>
+          <div style={itemStyle}>
+            <div style={labelStyle}>姓名</div>
+            <div style={valueStyle}>{getDisplayValue(userInfo.name)}</div>
+          </div>
+          <div style={itemStyle}>
+            <div style={labelStyle}>邮箱</div>
+            <div style={valueStyle}>{getDisplayValue(userInfo.email)}</div>
+          </div>
+          <div style={itemStyle}>
+            <div style={labelStyle}>手机号</div>
+            <div style={valueStyle}>{getDisplayValue(userInfo.mobile)}</div>
+          </div>
+          <div style={itemStyle}>
+            <div style={labelStyle}>工号</div>
+            <div style={valueStyle}>{getDisplayValue(userInfo.employee_id)}</div>
+          </div>
+          <div style={itemStyle}>
+            <div style={labelStyle}>公司</div>
+            <div style={valueStyle}>{getDisplayValue(userInfo.company_name)}</div>
+          </div>
+          <div style={itemStyle}>
+            <div style={labelStyle}>部门</div>
+            <div style={valueStyle}>{getDisplayValue(userInfo.department_name)}</div>
+          </div>
+          <div style={itemStyle}>
+            <div style={labelStyle}>组别</div>
+            <div style={valueStyle}>{getDisplayValue(userInfo.group_name)}</div>
+          </div>
+          <div style={itemStyle}>
+            <div style={labelStyle}>职位</div>
+            <div style={valueStyle}>{getDisplayValue(userInfo.position_name)}</div>
+          </div>
+          <div style={itemStyle}>
+            <div style={labelStyle}>直接上级</div>
+            <div style={valueStyle}>{getDisplayValue(userInfo.supervisor_name)}</div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };
 

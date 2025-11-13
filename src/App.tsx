@@ -12,7 +12,7 @@ import { Plus, Table as TableIcon, Grid3X3, Download, Menu, X, RotateCcw, Histor
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
 import { toast, Toaster } from 'sonner';
-import { Table, ViewMode } from '@/types';
+import { Table, ViewMode, UserInfo } from '@/types';
 import { TableManager } from '@/components/TableManager';
 import { DataTable } from '@/components/DataTable';
 import { CardView } from '@/components/CardView';
@@ -37,20 +37,21 @@ function App() {
   } = useTables();
   
   // 从缓存获取用户信息的函数
-  const loadCachedUserInfo = () => {
+  const loadCachedUserInfo = (): UserInfo | null => {
     try {
       const cachedUserInfo = getUserInfo();
       if (cachedUserInfo) {
+        const typedUserInfo = cachedUserInfo as UserInfo;
         // 更新组件状态为缓存的用户信息
-        setCurrentUserName(cachedUserInfo.nickname || cachedUserInfo.name);
-        setCurrentRole(cachedUserInfo.foundation_user_role || 'user');
-        setCurrentPermissions(cachedUserInfo.foundation_user_permissions || []);
+        setCurrentUserName(typedUserInfo.nickname || typedUserInfo.name || null);
+        setCurrentRole(typedUserInfo.role || 'user');
+        setCurrentPermissions(typedUserInfo.permissions || []);
         
         // 同步设置其他用户信息状态
-        setCurrentUserInfo(cachedUserInfo);
+        setCurrentUserInfo(typedUserInfo);
         
-        console.log('Loaded user info from cache:', cachedUserInfo);
-        return cachedUserInfo;
+        console.log('Loaded user info from cache:', typedUserInfo);
+        return typedUserInfo;
       }
       return null;
     } catch (error) {
@@ -73,12 +74,13 @@ function App() {
       try {
         const userInfo = await fetchUserInfoFromHRSaaS(token);
         if (userInfo) {
+          const typedUserInfo = userInfo as UserInfo;
           // 更新组件状态
-          setCurrentUserName(userInfo.nickname || userInfo.name);
-          setCurrentRole(userInfo.foundation_user_role || 'user');
-          setCurrentPermissions(userInfo.foundation_user_permissions || []);
-          setCurrentUserInfo(userInfo);
-          return userInfo;
+          setCurrentUserName(typedUserInfo.nickname || typedUserInfo.name || null);
+          setCurrentRole(typedUserInfo.role || 'user');
+          setCurrentPermissions(typedUserInfo.permissions || []);
+          setCurrentUserInfo(typedUserInfo);
+          return typedUserInfo;
         }
       } catch (error) {
         console.error('Error updating user info from HRSaaS:', error);
@@ -99,7 +101,7 @@ function App() {
   const [currentRole, setCurrentRole] = useState<string | null>(null);
   const [currentPermissions, setCurrentPermissions] = useState<string[]>([]);
   // 新增：存储完整的用户信息对象
-  const [currentUserInfo, setCurrentUserInfo] = useState<any>(null);
+  const [currentUserInfo, setCurrentUserInfo] = useState<UserInfo | null>(null);
   const canAccessPermissionSettings = (currentRole === 'admin') || currentPermissions.includes('admin.manage');
   const [isPermissionsDialogOpen, setIsPermissionsDialogOpen] = useState(false);
   const [isPermissionsSettingsOpen, setIsPermissionsSettingsOpen] = useState(false);
@@ -127,8 +129,6 @@ function App() {
     if (adminPassword.trim() === ADMIN_PASSWORD) {
       try {
         localStorage.setItem('currentUserName', 'admin');
-        localStorage.setItem('foundation_user_role', 'admin');
-        localStorage.setItem('foundation_user_permissions', JSON.stringify(['admin.manage']));
         localStorage.setItem('admin_login_method', 'password');
       } catch {}
       setCurrentUserName('admin');
@@ -159,14 +159,7 @@ function App() {
       setIsPasswordAdmin(false);
     }
   }, []);
-  const startFoundationLogin = () => {
-    const url = (import.meta as any).env?.VITE_FOUNDATION_LOGIN_URL || '';
-    if (!url) {
-      toast.error('未配置 Foundation 登入地址');
-      return;
-    }
-    window.open(url, 'foundationLogin');
-  };
+  // 已移除 foundation 登录功能
 
   const startOidcLogin = async () => {
     try {
@@ -223,61 +216,7 @@ function App() {
 
 
 
-  useEffect(() => {
-    const handler = (event: MessageEvent) => {
-      const data = (event as any).data;
-      if (data && data.type === 'FOUNDATION_AUTH_SUCCESS' && data.username) {
-        try {
-          localStorage.setItem('foundation_user_name', data.username);
-        } catch {}
-        setCurrentUserName(data.username);
-        if (data.username === 'admin') {
-          try { localStorage.setItem('admin_login_method', 'foundation'); } catch {}
-          setIsPasswordAdmin(false);
-        }
-        // 合併至 Foundation 使用者列表
-        try {
-          const rawList = localStorage.getItem('foundation_user_list');
-          let list: string[] = [];
-          if (rawList) {
-            try {
-              const parsed = JSON.parse(rawList);
-              if (Array.isArray(parsed)) list = parsed.filter((x) => typeof x === 'string');
-            } catch {
-              if (rawList.includes(',')) list = rawList.split(',').map((s) => s.trim()).filter(Boolean);
-            }
-          }
-          list = Array.from(new Set([...(list || []), data.username]));
-          localStorage.setItem('foundation_user_list', JSON.stringify(list));
-          setFoundationUsers(list);
-        } catch {}
-        const foundationRole = typeof data.role === 'string' ? data.role : null;
-        const foundationPerms = Array.isArray(data.permissions) ? data.permissions : [];
-        if (foundationRole) {
-          try { localStorage.setItem('foundation_user_role', foundationRole); } catch {}
-          setCurrentRole(foundationRole);
-        }
-        let nextPerms = foundationPerms;
-        const isAdvanced = (
-          (foundationRole && foundationRole.toLowerCase() === 'admin') ||
-          nextPerms.includes('admin.manage') ||
-          (Array.isArray(data.groups) && data.groups.includes('permission-admin')) ||
-          data.isAdvanced === true
-        );
-        if (isAdvanced) {
-          nextPerms = Array.from(new Set([...(nextPerms || []), 'admin.manage']));
-        }
-        if (nextPerms && nextPerms.length > 0) {
-          try { localStorage.setItem('foundation_user_permissions', JSON.stringify(nextPerms)); } catch {}
-          setCurrentPermissions(nextPerms);
-        }
-        toast.success('Foundation 登入成功');
-        setIsLoginDialogOpen(false);
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, []);
+  // 已移除 foundation 登录消息处理
 
   // 新增：OIDC 回調處理（前端交換 code）
   useEffect(() => {
@@ -356,19 +295,16 @@ function App() {
               const name = payload.name || payload.preferred_username || payload.email || (payload.sub ? String(payload.sub).slice(0, 8) : null);
               if (name) {
                 try { localStorage.setItem('currentUserName', String(name)); } catch {}
-                try { localStorage.setItem('foundation_user_name', String(name)); } catch {}
                 setCurrentUserName(String(name));
               }
               const groups = Array.isArray(payload.groups) ? payload.groups : [];
               const isAdvanced = groups.includes('permission-admin');
               const nextPerms = isAdvanced ? ['admin.manage'] : [];
               if (nextPerms.length > 0) {
-                try { localStorage.setItem('foundation_user_permissions', JSON.stringify(nextPerms)); } catch {}
                 setCurrentPermissions(nextPerms);
               }
               const role = typeof payload.role === 'string' ? payload.role : null;
               if (role) {
-                try { localStorage.setItem('foundation_user_role', role); } catch {}
                 setCurrentRole(role);
               }
             }
@@ -422,25 +358,25 @@ function App() {
               userInfo = await fetchUserInfoFromHRSaaS(accessToken);
               if (userInfo) {
                 // 确保用户信息包含所有必要的ID字段
-                const completeUserInfo = {
-                  ...userInfo,
+                const completeUserInfo: UserInfo = {
+                  ...(userInfo as UserInfo),
                   // 确保ID字段存在
-                  user_id: userInfo.user_id || userInfo.id || '',
-                  company_id: userInfo.company_id || '',
-                  department_id: userInfo.department_id || '',
-                  group_id: userInfo.group_id || '',
-                  position_id: userInfo.position_id || '',
-                  supervisor_id: userInfo.supervisor_id || '',
+                  user_id: (userInfo as UserInfo).user_id || (userInfo as UserInfo).id || '',
+                  company_id: (userInfo as UserInfo).company_id || '',
+                  department_id: (userInfo as UserInfo).department_id || '',
+                  group_id: (userInfo as UserInfo).group_id || '',
+                  position_id: (userInfo as UserInfo).position_id || '',
+                  supervisor_id: (userInfo as UserInfo).supervisor_id || '',
                   // 确保名称字段存在
-                  name: userInfo.name || userInfo.nickname || '用户',
-                  email: userInfo.email || '',
-                  mobile: userInfo.mobile || '',
-                  employee_id: userInfo.employee_id || '',
-                  company_name: userInfo.company_name || '未提供',
-                  department_name: userInfo.department_name || '未提供',
-                  group_name: userInfo.group_name || '未提供',
-                  position_name: userInfo.position_name || '未提供',
-                  supervisor_name: userInfo.supervisor_name || '未提供'
+                  name: (userInfo as UserInfo).name || (userInfo as UserInfo).nickname || '用户',
+                  email: (userInfo as UserInfo).email || '',
+                  mobile: (userInfo as UserInfo).mobile || '',
+                  employee_id: (userInfo as UserInfo).employee_id || '',
+                  company_name: (userInfo as UserInfo).company_name || '未提供',
+                  department_name: (userInfo as UserInfo).department_name || '未提供',
+                  group_name: (userInfo as UserInfo).group_name || '未提供',
+                  position_name: (userInfo as UserInfo).position_name || '未提供',
+                  supervisor_name: (userInfo as UserInfo).supervisor_name || '未提供'
                 };
                 
                 // 重新保存完整的用户信息
@@ -454,9 +390,9 @@ function App() {
                 console.log('成功从HRSaaS API获取用户信息:', completeUserInfo.nickname || completeUserInfo.name);
                 
                 // 更新组件状态
-                setCurrentUserName(completeUserInfo.nickname || completeUserInfo.name);
-                setCurrentRole(completeUserInfo.foundation_user_role || 'user');
-                setCurrentPermissions(completeUserInfo.foundation_user_permissions || []);
+                setCurrentUserName(completeUserInfo.nickname || completeUserInfo.name || null);
+                setCurrentRole(completeUserInfo.role || 'user');
+                setCurrentPermissions(completeUserInfo.permissions || []);
                 setCurrentUserInfo(completeUserInfo);
                 
                 // 获取并设置groups和scope（如果HRSaaS返回了这些信息）
@@ -693,9 +629,10 @@ function App() {
         
         // 5. 加载用户信息到状态
         if (userInfo) {
-          setCurrentUserName(userInfo.nickname || userInfo.name);
-          setCurrentRole(userInfo.foundation_user_role || 'user');
-          setCurrentPermissions(userInfo.foundation_user_permissions || []);
+          const typedUserInfo = userInfo as UserInfo;
+          setCurrentUserName(typedUserInfo.nickname || typedUserInfo.name || null);
+          setCurrentRole(typedUserInfo.foundation_user_role || typedUserInfo.role || 'user');
+          setCurrentPermissions(typedUserInfo.foundation_user_permissions || typedUserInfo.permissions || []);
           
           // 加载额外的用户信息
           const savedGroupsStr = storageService.getItem('foundation_user_groups');
@@ -755,13 +692,18 @@ function App() {
             const newUserInfo = await fetchUserInfoFromHRSaaS(token);
             
             if (newUserInfo) {
+              const typedNewUserInfo = newUserInfo as UserInfo;
               // 更新状态
-              setCurrentUserName(newUserInfo.nickname || newUserInfo.name);
-              if (newUserInfo.foundation_user_role) {
-                setCurrentRole(newUserInfo.foundation_user_role);
+              setCurrentUserName(typedNewUserInfo.nickname || typedNewUserInfo.name || null);
+              if (typedNewUserInfo.foundation_user_role) {
+                setCurrentRole(typedNewUserInfo.foundation_user_role);
+              } else if (typedNewUserInfo.role) {
+                setCurrentRole(typedNewUserInfo.role);
               }
-              if (newUserInfo.foundation_user_permissions) {
-                setCurrentPermissions(newUserInfo.foundation_user_permissions);
+              if (typedNewUserInfo.foundation_user_permissions) {
+                setCurrentPermissions(typedNewUserInfo.foundation_user_permissions);
+              } else if (typedNewUserInfo.permissions) {
+                setCurrentPermissions(typedNewUserInfo.permissions);
               }
               
               // 加载额外的用户信息

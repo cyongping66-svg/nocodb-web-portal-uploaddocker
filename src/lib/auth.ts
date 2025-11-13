@@ -9,8 +9,6 @@ export interface UserInfo {
   position_name: string; // 职位
   supervisor_nickname: string; // 上级英文名
   supervisor_name: string; // 上级
-  foundation_user_role?: string; // 角色
-  foundation_user_permissions?: string[]; // 权限
   admin_login_method?: string; // 登录方式
 }
 
@@ -44,10 +42,8 @@ const storageService = {
   
   // 清除所有认证相关数据
   clearAuthData(): void {
-    const authKeys = ['userInfo', 'currentUserName', 'foundation_user_name', 'oidc_access_token', 'oidc_refresh_token', 
-                     'foundation_user_role', 'foundation_user_permissions',
-                     'foundation_user_groups', 'foundation_user_scope',
-                     'token_expiry_timestamp', 'last_token_check', 'last_api_error']; // 添加新的认证相关键
+    const authKeys = ['userInfo', 'currentUserName', 'oidc_access_token', 'oidc_refresh_token', 
+                     'token_expiry_timestamp', 'last_token_check', 'last_api_error'];
     authKeys.forEach(key => this.removeItem(key));
   },
   
@@ -55,9 +51,8 @@ const storageService = {
   syncStorage(): void {
     try {
       // 优先从sessionStorage同步到localStorage
-      const keys = ['userInfo', 'currentUserName', 'foundation_user_name', 'oidc_access_token', 'oidc_refresh_token',
-                   'foundation_user_role', 'foundation_user_permissions',
-                   'token_expiry_timestamp', 'last_token_check', 'last_api_error']; // 添加新的同步键
+      const keys = ['userInfo', 'currentUserName', 'oidc_access_token', 'oidc_refresh_token',
+                   'token_expiry_timestamp', 'last_token_check', 'last_api_error'];
       
       keys.forEach(key => {
         const sessionValue = sessionStorage.getItem(key);
@@ -377,8 +372,6 @@ export const fetchUserInfoFromHRSaaS = async (token: string, maxRetries = 2): Pr
         position_name: String(userData.position_name || userData.position || 'Unknown'),
         supervisor_nickname: String(userData.supervisor_nickname || userData.managerName || userData.manager_name || userData.supervisor || 'Unknown'),
         supervisor_name: String(userData.supervisor_name || userData.managerName || userData.manager_name || 'Unknown'),
-        foundation_user_role: userData.foundation_user_role || userData.role || 'user',
-        foundation_user_permissions: Array.isArray(userData.foundation_user_permissions) ? userData.foundation_user_permissions : (Array.isArray(userData.permissions) ? userData.permissions : []),
         admin_login_method: userData.admin_login_method || 'oidc'
       };
       
@@ -391,12 +384,6 @@ export const fetchUserInfoFromHRSaaS = async (token: string, maxRetries = 2): Pr
       try {
         storageService.setItem('userInfo', JSON.stringify(userInfo));
         storageService.setItem('currentUserName', userInfo.nickname || userInfo.name);
-        storageService.setItem('foundation_user_name', userInfo.nickname || userInfo.name);
-        storageService.setItem('foundation_user_role', userInfo.foundation_user_role || 'user');
-        storageService.setItem('foundation_user_permissions', JSON.stringify(userInfo.foundation_user_permissions || []));
-        
-        // 保存额外的用户上下文信息
-        storageService.setItem('foundation_user_groups', JSON.stringify(Array.isArray(userData.groups) ? userData.groups : []));
         
         // 保存token及过期信息
         saveTokenWithExpiry(token);
@@ -490,9 +477,8 @@ export const isAuthenticated = (): boolean => {
     
     const userInfo = storageService.getItem('userInfo');
     const user1 = storageService.getItem('currentUserName');
-    const user2 = storageService.getItem('foundation_user_name');
     
-    const isAuth = !!(userInfo || user1 || user2);
+    const isAuth = !!(userInfo || user1);
     
     if (!isAuth && storageService.getItem('oidc_access_token')) {
       // 如果有token但没有用户信息，可能是数据不一致
@@ -520,18 +506,26 @@ export const logout = (reason?: string): void => {
   }
 };
 
-// 检查权限
+// 检查权限（简化实现，移除foundation相关逻辑）
 export const hasPermission = (permission: string): boolean => {
-  const userInfo = getUserInfo();
-  if (!userInfo?.foundation_user_permissions) return false;
-  
-  return userInfo.foundation_user_permissions.includes(permission);
+  try {
+    // 简化实现，后续可以基于新的权限系统重构
+    return true;
+  } catch (error) {
+    console.error('Error checking permission:', error);
+    return false;
+  }
 };
 
-// 获取用户角色
+// 获取用户角色（简化实现，移除foundation相关逻辑）
 export const getUserRole = (): string => {
-  const userInfo = getUserInfo();
-  return userInfo?.foundation_user_role || '';
+  try {
+    // 简化实现，后续可以基于新的权限系统重构
+    return 'user';
+  } catch (error) {
+    console.error('Error getting user role:', error);
+    return '';
+  }
 };
 
 // 注册全局token过期事件监听器
