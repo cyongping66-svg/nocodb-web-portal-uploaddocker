@@ -1,15 +1,29 @@
 // 定义用户信息接口
 export interface UserInfo {
   id: string;
+  user_id: string;      // 用户ID
   name: string;         // 姓名
   nickname: string;     // 英文名
+  email?: string;       // 邮箱
+  mobile?: string;      // 手机号
+  employee_id?: string; // 员工编号
+  company_id: string;   // 公司ID
   company_name: string; // 公司
+  department_id: string; // 部门ID
   department_name: string; // 部门
+  group_id: string;     // 小组ID
   group_name: string;   // 小组
+  position_id: string;  // 职位ID
   position_name: string; // 职位
-  supervisor_nickname: string; // 上级英文名
+  supervisor_id: string; // 上级ID
   supervisor_name: string; // 上级
+  supervisor_nickname: string; // 上级英文名
+  role?: string;        // 角色
+  permissions?: string[]; // 权限列表
+  foundation_user_role?: string; // 基础用户角色
+  foundation_user_permissions?: string[]; // 基础用户权限
   admin_login_method?: string; // 登录方式
+  [key: string]: any;   // 索引签名，支持其他可能的字段
 }
 
 // HRSaaS API配置

@@ -4894,7 +4894,9 @@ export function DataTable({
                               </SelectContent>
                             </Select>
                           </div>
+                          
                           <div>
+                            
                             <Label htmlFor="config-dict-column">字典列</Label>
                             {(() => {
                               const dictTable = allTables.find(t => t.id === configForm.dictRef?.tableId);

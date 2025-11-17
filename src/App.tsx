@@ -349,7 +349,7 @@ function App() {
           
           // 根据PRD要求，必须从HRSaaS API获取用户信息，而不是从token解析
           if (accessToken) {
-            console.log('OIDC登录成功，开始从HRSaaS API获取用户信息...');
+            console.log('OMEOFFICE登录成功，开始从HRSaaS API获取用户信息...');
             console.log('Token type:', accessToken.split('.').length === 3 ? 'JWT' : '可能是opaque token');
             
             try {
@@ -390,9 +390,9 @@ function App() {
                 console.log('成功从HRSaaS API获取用户信息:', completeUserInfo.nickname || completeUserInfo.name);
                 
                 // 更新组件状态
-                setCurrentUserName(completeUserInfo.nickname || completeUserInfo.name || null);
-                setCurrentRole(completeUserInfo.role || 'user');
-                setCurrentPermissions(completeUserInfo.permissions || []);
+                setCurrentUserName(completeUserInfo.nickname || completeUserInfo.name || '用户');
+                setCurrentRole(completeUserInfo.role || completeUserInfo.foundation_user_role || 'user');
+                setCurrentPermissions(completeUserInfo.permissions || completeUserInfo.foundation_user_permissions || []);
                 setCurrentUserInfo(completeUserInfo);
                 
                 // 获取并设置groups和scope（如果HRSaaS返回了这些信息）
@@ -410,7 +410,7 @@ function App() {
                 const savedScope = storageService.getItem('foundation_user_scope');
                 if (savedScope) setCurrentScope(savedScope);
                 
-                console.log('OIDC登录成功，已从HRSaaS API获取并初始化用户信息');
+                console.log('OMEOFFICE登录成功，已从HRSaaS API获取并初始化用户信息');
               } else {
                 // 检查是否是401错误
                 const lastErrorStr = storageService.getItem('last_api_error');
@@ -528,9 +528,10 @@ function App() {
               }
               
               // 更新组件状态
-              setCurrentUserName(userInfo.nickname || userInfo.name);
+              setCurrentUserName(userInfo.nickname || userInfo.name || '用户');
               setCurrentRole(userInfo.foundation_user_role || 'user');
               setCurrentPermissions(userInfo.foundation_user_permissions || []);
+              setCurrentUserInfo(userInfo as UserInfo);
               
               toast.warning('無法從HRSaaS獲取完整用戶信息，已使用基本信息');
             }
