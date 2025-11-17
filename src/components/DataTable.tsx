@@ -889,8 +889,49 @@ export function DataTable({
       return;
     }
 
+    // 检查是否是从有关联变为无关联
+    const wasRelation = targetOldColumn && targetOldColumn.relation && targetOldColumn.relation.targetTableId && targetOldColumn.relation.targetColumnId;
+    const hasRelation = configForm.relation && configForm.relation.targetTableId && configForm.relation.targetColumnId;
+    
+    // 如果是取消关联（从有到无），需要清理目标表中的反向关联字段
+    if (wasRelation && !hasRelation) {
+      try {
+        // 获取原关联的目标表
+        const oldTargetTable = allTables.find(t => t.id === targetOldColumn.relation.targetTableId);
+        if (oldTargetTable) {
+          // 查找反向关联字段 - 即目标表中关联回当前表的字段
+          const reverseRelationColumns = oldTargetTable.columns.filter(col => 
+            col.relation && 
+            col.relation.targetTableId === table.id && 
+            col.relation.targetColumnId === configColumnId
+          );
+          
+          // 如果找到反向关联字段，将其从目标表中移除
+          if (reverseRelationColumns.length > 0) {
+            // 移除找到的反向关联字段
+            const updatedTargetColumns = oldTargetTable.columns.filter(
+              col => !reverseRelationColumns.find(r => r.id === col.id)
+            );
+            
+            // 更新目标表
+            const updatedTargetTable = { ...oldTargetTable, columns: updatedTargetColumns };
+            
+            // 调用API更新目标表结构
+            await apiService.updateTableStructure(updatedTargetTable.id, {
+              columns: updatedTargetColumns
+            });
+            
+            console.log('反向关联字段已清理');
+          }
+        }
+      } catch (err) {
+        console.error('清理反向关联字段失败:', err);
+        // 不阻止主流程，仅记录错误
+      }
+    }
+    
     // 中文註釋：添加单步操作双向关联功能 - 用户只需在一个表中创建关联字段，系统自动在目标表中创建反向关联字段，无需手动操作两次
-    if (configForm.relation && configForm.relation.targetTableId && configForm.relation.targetColumnId) {
+    if (hasRelation) {
       try {
         // 找到目标表
         const targetTable = allTables.find(t => t.id === configForm.relation?.targetTableId);
