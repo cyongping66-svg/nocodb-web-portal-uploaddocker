@@ -27,7 +27,7 @@ export interface UserInfo {
 }
 
 // HRSaaS API配置
-const HRSaaS_API_URL = 'https://hrsaastest-1-api.wiltechs.com/api/user/employee-info';
+const HRSaaS_API_URL = 'https://api.tlentlink.com/api/user/employee-info';
 
 // 定义错误类型
 export interface AuthError extends Error {

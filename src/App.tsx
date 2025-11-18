@@ -163,9 +163,9 @@ function App() {
 
   const startOidcLogin = async () => {
     try {
-      const AUTHORIZE_URL = 'https://ome-account.wiltechs.com/connect/authorize';
+      const AUTHORIZE_URL = 'https://ome-account.omenow.com/connect/authorize';
       const REDIRECT_URI = 'http://localhost:5000';
-      const CLIENT_ID = '932647bf-39db-4991-8589-09bdb4074d2b';
+      const CLIENT_ID = '4543e530-6336-40ea-a921-736100c4126e';
       const SCOPE = 'offline_access openid email phone profile incubation_road';
 
       const base64url = (buf: Uint8Array) => {
@@ -253,7 +253,7 @@ function App() {
           return;
         }
         const REDIRECT_URI = 'http://localhost:5000';
-        const CLIENT_ID = '932647bf-39db-4991-8589-09bdb4074d2b';
+        const CLIENT_ID = '4543e530-6336-40ea-a921-736100c4126e';
 
         const body = new URLSearchParams();
         body.set('grant_type', 'authorization_code');
@@ -262,7 +262,7 @@ function App() {
         body.set('code', code);
         body.set('code_verifier', codeVerifier);
 
-        const resp = await fetch('https://ome-account.wiltechs.com/connect/token', {
+        const resp = await fetch('https://ome-account.omenow.com/connect/token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: body.toString(),
