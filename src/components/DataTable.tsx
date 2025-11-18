@@ -684,6 +684,12 @@ export function DataTable({
       return;
     }
     
+    // 验证关联字段必须同时选择表和字段
+    if (configForm.relation && configForm.relation.targetTableId && !configForm.relation.targetColumnId) {
+      toast.error('请选择关联字段以完成关联配置');
+      return;
+    }
+    
     // 验证字段类型和名称匹配
     if (configForm.relation && configForm.relation.targetTableId && configForm.relation.targetColumnId) {
       const currentColumn = table.columns.find(c => c.id === configColumnId);
@@ -897,7 +903,7 @@ export function DataTable({
     if (wasRelation && !hasRelation) {
       try {
         // 获取原关联的目标表
-        const oldTargetTable = allTables.find(t => t.id === targetOldColumn.relation.targetTableId);
+        const oldTargetTable = targetOldColumn.relation ? allTables.find(t => t.id === targetOldColumn.relation.targetTableId) : undefined;
         if (oldTargetTable) {
           // 查找反向关联字段 - 即目标表中关联回当前表的字段
           const reverseRelationColumns = oldTargetTable.columns.filter(col => 
@@ -917,8 +923,9 @@ export function DataTable({
             const updatedTargetTable = { ...oldTargetTable, columns: updatedTargetColumns };
             
             // 调用API更新目标表结构
-            await apiService.updateTableStructure(updatedTargetTable.id, {
-              columns: updatedTargetColumns
+            // 使用正确的API方法更新表结构
+            await apiService.updateTable(updatedTargetTable.id, {
+              columns: updatedTargetColumns,
             });
             
             console.log('反向关联字段已清理');
@@ -1003,7 +1010,7 @@ export function DataTable({
   const [singleSelectDraft, setSingleSelectDraft] = useState<Record<string, string>>({});
   const [filters, setFilters] = useState<{ [columnId: string]: string }>({});
   const [isFilterOpen, setIsFilterOpen] = useState(false);
-  const [enableMultiTableQuery, setEnableMultiTableQuery] = useState(false);
+  const [enableMultiTableQuery, setEnableMultiTableQuery] = useState(true);
   
   // 获取与当前行相关联的所有表的数据（包括被动关联）
   const getRelatedTableDataByRow = (currentTableId: string, currentRowId: string): Array<{ table: Table; rows: Row[] }> => {
@@ -3198,6 +3205,9 @@ export function DataTable({
                 
                 return (
                   <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-primary/10 border border-primary/20 text-primary m-1">
+                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                    </svg>
                     {formatMultiTableData(relatedItem) || '未找到关联数据'}
                   </span>
                 );
@@ -3250,7 +3260,7 @@ export function DataTable({
                       className="text-xs text-muted-foreground pl-2 border-l-2 border-secondary/30 cursor-pointer hover:text-secondary transition-colors"
                       onClick={() => handleRelationClick(relatedItem, `引用此记录的数据`)}
                     >
-                      {formatPassiveRelationData(relatedItem, {})}
+                      {formatPassiveRelationData(relatedItem.rows[0], relatedItem.table)}
                     </div>
                   ))}
                 </div>
@@ -3304,7 +3314,7 @@ export function DataTable({
                       className="text-xs text-muted-foreground pl-2 border-l-2 border-secondary/30 cursor-pointer hover:text-secondary transition-colors"
                       onClick={() => handleRelationClick(relatedItem, `引用此记录的数据`)}
                     >
-                      {formatPassiveRelationData(relatedItem, {})}
+                      {formatPassiveRelationData(relatedItem.rows[0], relatedItem.table)}
                     </div>
                   ))}
                 </div>
@@ -4561,9 +4571,9 @@ export function DataTable({
                               <Label htmlFor="new-relation-column">關聯字段</Label>
                               {(() => {
                                 const targetTable = allTables.find(t => t.id === newColumn.relation?.targetTableId);
-                                // 只显示与当前字段类型相同且名称相同的目标列
-                                // 注意：对于关联字段，我们需要确保类型判断正确
-                                const targetCols: Column[] = targetTable?.columns.filter(c => c.type === newColumn.type && c.name === newColumn.name) || [];
+                                // 允许选择所有类型的字段作为关联字段，不仅限于类型和名称匹配
+                                // 这样所有类型（文字、数字、日期等）都可以作为关联字段
+                                const targetCols: Column[] = targetTable?.columns || [];
                                 return (
                                   <Select
                                     value={newColumn.relation?.targetColumnId || ''}
@@ -4731,17 +4741,34 @@ export function DataTable({
                         <div>
                           <Label htmlFor="config-relation-table">關聯表</Label>
                           <Select
-                            value={configForm.relation.targetTableId}
-                            onValueChange={(value) => setConfigForm({ 
+                          value={configForm.relation.targetTableId}
+                          onValueChange={(value) => {
+                            // 找到选中的目标表
+                            const targetTable = allTables.find(t => t.id === value);
+                            // 确定当前字段的信息
+                            const currentColumn = table.columns.find(c => c.id === configColumnId);
+                            const currentTypeName = configForm.name.trim() || currentColumn?.name;
+                            
+                            // 自动预选第一个匹配的关联字段
+                            const matchingColumns = targetTable?.columns.filter(col => 
+                              (col.type === currentColumn?.type || col.type === configForm.type) && 
+                              col.name === currentTypeName
+                            ) || [];
+                            
+                            // 获取第一个匹配的字段ID
+                            const firstMatchingColumnId = matchingColumns.length > 0 ? matchingColumns[0].id : '';
+                            
+                            setConfigForm({ 
                               ...configForm, 
                               relation: { 
                                 ...configForm.relation,
-                                targetTableId: value,
-                                targetColumnId: '',
-                                displayColumnId: '',
-                                type: configForm.relation?.type || 'single'
-                              } 
-                            })}
+                                  targetTableId: value,
+                                  targetColumnId: firstMatchingColumnId,
+                                  displayColumnId: firstMatchingColumnId,
+                                  type: configForm.relation?.type || 'single'
+                                } 
+                            });
+                          }}
                           >
                             <SelectTrigger onClick={() => refreshAllTables()} className="mt-2">
                               <SelectValue placeholder={tablesLoading ? '載入中…' : '選擇關聯表'} />
@@ -4759,6 +4786,7 @@ export function DataTable({
                           <>
                             <div>
                               <Label htmlFor="config-relation-target-column">關聯字段</Label>
+                              <p className="text-xs text-gray-500 mt-1">*必须选择关联字段才能建立有效关联</p>
                               {(() => {
                                 const targetTable = allTables.find(t => t.id === configForm.relation?.targetTableId);
                                 // 只显示与当前字段类型和名称都相同的目标列
