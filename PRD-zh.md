@@ -4,6 +4,17 @@
 
 ## 最新修复需求
 
+### cookie-parser依赖缺失修复
+- **问题描述**: 后端服务启动时出现错误，提示找不到'cookie-parser'模块，导致Docker构建失败
+- **修复目标**: 解决依赖缺失问题，确保后端服务正常启动和Docker构建成功
+- **影响范围**: server/package.json和server/package-lock.json文件，server.js中使用cookie-parser的部分
+- **实现细节**:
+  - 在server/package.json的dependencies中添加"cookie-parser": "^1.4.6"依赖
+  - 执行npm install命令更新package-lock.json文件，确保依赖记录同步
+- **验收标准**:
+  - 后端服务能够正常启动，不再报依赖缺失错误
+  - Docker构建过程顺利完成，不再出现npm ci失败的情况
+
 ### 账号详情页面数据显示问题修复
 - **问题描述**: 打开账号详情页面时显示"未提供"，需手动刷新才能显示正确信息
 - **修复目标**: 确保账号详情页面首次加载时即可正确显示用户信息，无需手动刷新
