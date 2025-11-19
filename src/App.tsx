@@ -164,7 +164,7 @@ function App() {
   const startOidcLogin = async () => {
     try {
       const AUTHORIZE_URL = 'https://ome-account.omenow.com/connect/authorize';
-      const REDIRECT_URI = 'http://47.238.241.114:8081/api/auth/callback';
+      const REDIRECT_URI = 'http://47.238.241.114:8081/';
       const CLIENT_ID = '4543e530-6336-40ea-a921-736100c4126e';
       const SCOPE = 'offline_access openid email phone profile incubation_road';
 
@@ -301,7 +301,7 @@ function App() {
           } catch {} 
           return;
         }
-        const REDIRECT_URI = 'http://47.238.241.114:8081/api/auth/callback';
+        const REDIRECT_URI = 'http://47.238.241.114:8081/';
           const CLIENT_ID = '4543e530-6336-40ea-a921-736100c4126e';
 
         const body = new URLSearchParams();
