@@ -903,7 +903,7 @@ export function DataTable({
     if (wasRelation && !hasRelation) {
       try {
         // 获取原关联的目标表
-        const oldTargetTable = targetOldColumn.relation ? allTables.find(t => t.id === targetOldColumn.relation.targetTableId) : undefined;
+        const oldTargetTable = targetOldColumn.relation ? allTables.find(t => t.id === targetOldColumn.relation?.targetTableId) : undefined;
         if (oldTargetTable) {
           // 查找反向关联字段 - 即目标表中关联回当前表的字段
           const reverseRelationColumns = oldTargetTable.columns.filter(col => 

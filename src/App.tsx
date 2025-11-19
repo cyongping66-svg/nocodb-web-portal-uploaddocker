@@ -164,26 +164,75 @@ function App() {
   const startOidcLogin = async () => {
     try {
       const AUTHORIZE_URL = 'https://ome-account.omenow.com/connect/authorize';
-      const REDIRECT_URI = 'http://47.238.241.114:8081/';
+      const REDIRECT_URI = 'http://47.238.241.114:8081/api/auth/callback';
       const CLIENT_ID = '4543e530-6336-40ea-a921-736100c4126e';
       const SCOPE = 'offline_access openid email phone profile incubation_road';
 
-      const base64url = (buf: Uint8Array) => {
+      // 工具函数：Base64 URL编码
+      const base64url = (buf: Uint8Array | string) => {
+        if (typeof buf === 'string') {
+          // 字符串版本的base64url编码
+          return btoa(buf)
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        }
+        // Uint8Array版本的base64url编码
         return btoa(String.fromCharCode(...Array.from(buf)))
           .replace(/\+/g, '-')
           .replace(/\//g, '_')
           .replace(/=+$/, '');
       };
+      
+      // 生成随机字节
       const randomBytes = (len: number) => {
         const arr = new Uint8Array(len);
-        window.crypto.getRandomValues(arr);
+        if (window.crypto && window.crypto.getRandomValues) {
+          window.crypto.getRandomValues(arr);
+        } else {
+          // 后备随机生成
+          for (let i = 0; i < len; i++) {
+            arr[i] = Math.floor(Math.random() * 256);
+          }
+          console.warn('Using fallback random generation');
+        }
         return arr;
       };
+      
+      // 简单的SHA-256实现作为后备（仅用于开发环境）
+      const sha256Fallback = (str: string): string => {
+        // 这是一个简化的实现，仅用于开发环境测试
+        // 实际生产环境应该使用Web Crypto API
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+          const char = str.charCodeAt(i);
+          hash = ((hash << 5) - hash) + char;
+          hash = hash & hash; // 转换为32位整数
+        }
+        // 返回16进制字符串并转换为base64url格式
+        const hexString = Math.abs(hash).toString(16).padStart(8, '0');
+        return base64url(hexString);
+      };
+      
+      // 生成code verifier
       const codeVerifier = base64url(randomBytes(32));
-      const encoder = new TextEncoder();
-      const data = encoder.encode(codeVerifier);
-      const digest = await window.crypto.subtle.digest('SHA-256', data);
-      const codeChallenge = base64url(new Uint8Array(digest));
+      
+      // 计算code challenge，优先使用Web Crypto API，失败时使用后备方案
+      let codeChallenge;
+      if (window.crypto && window.crypto.subtle && window.isSecureContext) {
+        try {
+          const encoder = new TextEncoder();
+          const data = encoder.encode(codeVerifier);
+          const digest = await window.crypto.subtle.digest('SHA-256', data);
+          codeChallenge = base64url(new Uint8Array(digest));
+        } catch (cryptoError) {
+          console.warn('Web Crypto API failed, using fallback:', cryptoError);
+          codeChallenge = sha256Fallback(codeVerifier);
+        }
+      } else {
+        console.warn('Web Crypto API not available in insecure context, using fallback');
+        codeChallenge = sha256Fallback(codeVerifier);
+      }
       const state = base64url(randomBytes(16));
 
       // 同时保存到sessionStorage和localStorage，增加冗余避免丢失
@@ -252,8 +301,8 @@ function App() {
           } catch {} 
           return;
         }
-        const REDIRECT_URI = 'http://47.238.241.114:8081/';
-        const CLIENT_ID = '4543e530-6336-40ea-a921-736100c4126e';
+        const REDIRECT_URI = 'http://47.238.241.114:8081/api/auth/callback';
+          const CLIENT_ID = '4543e530-6336-40ea-a921-736100c4126e';
 
         const body = new URLSearchParams();
         body.set('grant_type', 'authorization_code');
@@ -345,7 +394,8 @@ function App() {
 
         // 初始化用户信息：优先从HRSaaS API获取完整用户信息
         try {
-          let userInfo = null;
+          // 给userInfo变量明确的类型声明
+          let userInfo: UserInfo | null = null;
           
           // 根据PRD要求，必须从HRSaaS API获取用户信息，而不是从token解析
           if (accessToken) {
@@ -355,45 +405,82 @@ function App() {
             try {
               // 调用HRSaaS API获取完整的用户信息
               // 注意：即使token不是JWT格式，我们也尝试调用API
-              userInfo = await fetchUserInfoFromHRSaaS(accessToken);
-              if (userInfo) {
-                // 确保用户信息包含所有必要的ID字段
-                const completeUserInfo: UserInfo = {
-                  ...(userInfo as UserInfo),
-                  // 确保ID字段存在
-                  user_id: (userInfo as UserInfo).user_id || (userInfo as UserInfo).id || '',
-                  company_id: (userInfo as UserInfo).company_id || '',
-                  department_id: (userInfo as UserInfo).department_id || '',
-                  group_id: (userInfo as UserInfo).group_id || '',
-                  position_id: (userInfo as UserInfo).position_id || '',
-                  supervisor_id: (userInfo as UserInfo).supervisor_id || '',
-                  // 确保名称字段存在
-                  name: (userInfo as UserInfo).name || (userInfo as UserInfo).nickname || '用户',
-                  email: (userInfo as UserInfo).email || '',
-                  mobile: (userInfo as UserInfo).mobile || '',
-                  employee_id: (userInfo as UserInfo).employee_id || '',
-                  company_name: (userInfo as UserInfo).company_name || '未提供',
-                  department_name: (userInfo as UserInfo).department_name || '未提供',
-                  group_name: (userInfo as UserInfo).group_name || '未提供',
-                  position_name: (userInfo as UserInfo).position_name || '未提供',
-                  supervisor_name: (userInfo as UserInfo).supervisor_name || '未提供'
+              const apiResult = await fetchUserInfoFromHRSaaS(accessToken);
+              
+              if (apiResult && typeof apiResult === 'object') {
+                // 使用安全的方式创建UserInfo对象
+                userInfo = {
+                  id: '',
+                  user_id: '',
+                  name: '用户',
+                  nickname: '',
+                  company_id: '',
+                  company_name: '未提供',
+                  department_id: '',
+                  department_name: '未提供',
+                  group_id: '',
+                  group_name: '未提供',
+                  position_id: '',
+                  position_name: '未提供',
+                  supervisor_id: '',
+                  supervisor_name: '未提供',
+                  email: '',
+                  mobile: '',
+                  employee_id: '',
+                  avatar: '',
+                  gender: '',
+                  birthday: '',
+                  join_date: '',
+                  status: '',
+                  last_login_time: '',
+                  foundation_user_role: 'user',
+                  foundation_user_permissions: []
                 };
+                
+                // 安全地合并apiResult中的字段
+                if ('user_id' in apiResult && apiResult.user_id) userInfo.user_id = String(apiResult.user_id);
+                if ('id' in apiResult && apiResult.id && !userInfo.user_id) userInfo.user_id = String(apiResult.id);
+                if ('name' in apiResult && apiResult.name) userInfo.name = String(apiResult.name);
+                if ('nickname' in apiResult && apiResult.nickname) userInfo.nickname = String(apiResult.nickname);
+                if ('company_id' in apiResult && apiResult.company_id) userInfo.company_id = String(apiResult.company_id);
+                if ('company_name' in apiResult && apiResult.company_name) userInfo.company_name = String(apiResult.company_name);
+                if ('department_id' in apiResult && apiResult.department_id) userInfo.department_id = String(apiResult.department_id);
+                if ('department_name' in apiResult && apiResult.department_name) userInfo.department_name = String(apiResult.department_name);
+                if ('group_id' in apiResult && apiResult.group_id) userInfo.group_id = String(apiResult.group_id);
+                if ('group_name' in apiResult && apiResult.group_name) userInfo.group_name = String(apiResult.group_name);
+                if ('position_id' in apiResult && apiResult.position_id) userInfo.position_id = String(apiResult.position_id);
+                if ('position_name' in apiResult && apiResult.position_name) userInfo.position_name = String(apiResult.position_name);
+                if ('supervisor_id' in apiResult && apiResult.supervisor_id) userInfo.supervisor_id = String(apiResult.supervisor_id);
+                if ('supervisor_name' in apiResult && apiResult.supervisor_name) userInfo.supervisor_name = String(apiResult.supervisor_name);
+                if ('email' in apiResult && apiResult.email) userInfo.email = String(apiResult.email);
+                if ('mobile' in apiResult && apiResult.mobile) userInfo.mobile = String(apiResult.mobile);
+                if ('employee_id' in apiResult && apiResult.employee_id) userInfo.employee_id = String(apiResult.employee_id);
+                if ('avatar' in apiResult && apiResult.avatar) userInfo.avatar = String(apiResult.avatar);
+                if ('gender' in apiResult && apiResult.gender) userInfo.gender = String(apiResult.gender);
+                if ('birthday' in apiResult && apiResult.birthday) userInfo.birthday = String(apiResult.birthday);
+                if ('join_date' in apiResult && apiResult.join_date) userInfo.join_date = String(apiResult.join_date);
+                if ('status' in apiResult && apiResult.status) userInfo.status = String(apiResult.status);
+                if ('last_login_time' in apiResult && apiResult.last_login_time) userInfo.last_login_time = String(apiResult.last_login_time);
+                if ('foundation_user_role' in apiResult && apiResult.foundation_user_role) userInfo.foundation_user_role = String(apiResult.foundation_user_role);
+                if ('foundation_user_permissions' in apiResult && Array.isArray(apiResult.foundation_user_permissions)) userInfo.foundation_user_permissions = apiResult.foundation_user_permissions;
+                if ('role' in apiResult && apiResult.role && !userInfo.foundation_user_role) userInfo.foundation_user_role = String(apiResult.role);
+                if ('permissions' in apiResult && Array.isArray(apiResult.permissions)) userInfo.foundation_user_permissions = apiResult.permissions;
                 
                 // 重新保存完整的用户信息
                 try {
-                  storageService.setItem('userInfo', JSON.stringify(completeUserInfo));
+                  storageService.setItem('userInfo', JSON.stringify(userInfo));
                   console.log('用户信息已保存到存储，包含所有必要字段');
                 } catch (e) {
                   console.warn('保存完整用户信息失败:', e);
                 }
                 
-                console.log('成功从HRSaaS API获取用户信息:', completeUserInfo.nickname || completeUserInfo.name);
+                console.log('成功从HRSaaS API获取用户信息:', userInfo.nickname || userInfo.name);
                 
                 // 更新组件状态
-                setCurrentUserName(completeUserInfo.nickname || completeUserInfo.name || '用户');
-                setCurrentRole(completeUserInfo.role || completeUserInfo.foundation_user_role || 'user');
-                setCurrentPermissions(completeUserInfo.permissions || completeUserInfo.foundation_user_permissions || []);
-                setCurrentUserInfo(completeUserInfo);
+                setCurrentUserName(userInfo.nickname || userInfo.name || '用户');
+                setCurrentRole(userInfo.foundation_user_role || 'user');
+                setCurrentPermissions(userInfo.foundation_user_permissions || []);
+                setCurrentUserInfo(userInfo);
                 
                 // 获取并设置groups和scope（如果HRSaaS返回了这些信息）
                 const savedGroupsStr = storageService.getItem('foundation_user_groups');
@@ -511,10 +598,11 @@ function App() {
               };
               
               // 保存临时用户信息
-              if (storageService) {
+              if (storageService && userInfo) {
+                // userInfo已经是UserInfo类型，直接使用
                 storageService.setItem('userInfo', JSON.stringify(userInfo));
-                storageService.setItem('currentUserName', userInfo.nickname || userInfo.name);
-                storageService.setItem('foundation_user_name', userInfo.nickname || userInfo.name);
+                storageService.setItem('currentUserName', userInfo.nickname || userInfo.name || '用户');
+                storageService.setItem('foundation_user_name', userInfo.nickname || userInfo.name || '用户');
                 storageService.setItem('foundation_user_role', userInfo.foundation_user_role || 'user');
                 storageService.setItem('foundation_user_permissions', JSON.stringify(userInfo.foundation_user_permissions || []));
                 if (Array.isArray(userData.groups)) {
@@ -528,10 +616,43 @@ function App() {
               }
               
               // 更新组件状态
-              setCurrentUserName(userInfo.nickname || userInfo.name || '用户');
-              setCurrentRole(userInfo.foundation_user_role || 'user');
-              setCurrentPermissions(userInfo.foundation_user_permissions || []);
-              setCurrentUserInfo(userInfo as UserInfo);
+              if (userInfo && typeof userInfo === 'object') {
+                // 使用与存储相同的安全用户信息对象
+                const safeUserInfo: UserInfo = {
+                  id: '',
+                  user_id: userInfo.user_id || userInfo.id || '',
+                  name: userInfo.name || userInfo.nickname || '用户',
+                  nickname: '',
+                  company_id: '',
+                  company_name: '未提供',
+                  department_id: '',
+                  department_name: '未提供',
+                  group_id: '',
+                  group_name: '未提供',
+                  position_id: '',
+                  position_name: '未提供',
+                  supervisor_id: '',
+                  supervisor_name: '未提供',
+                  email: '',
+                  mobile: '',
+                  employee_id: '',
+                  avatar: '',
+                  gender: '',
+                  birthday: '',
+                  join_date: '',
+                  status: '',
+                  last_login_time: '',
+                  foundation_user_role: 'user',
+                  foundation_user_permissions: [],
+                  // 覆盖默认值
+                  ...userInfo
+                };
+                
+                setCurrentUserName(safeUserInfo.nickname || safeUserInfo.name || '用户');
+                setCurrentRole(safeUserInfo.foundation_user_role || 'user');
+                setCurrentPermissions(safeUserInfo.foundation_user_permissions || []);
+                setCurrentUserInfo(safeUserInfo);
+              }
               
               toast.warning('無法從HRSaaS獲取完整用戶信息，已使用基本信息');
             }

@@ -378,15 +378,24 @@ export const fetchUserInfoFromHRSaaS = async (token: string, maxRetries = 2): Pr
       // PRD字段：userId, employeeId, name, department, position, managerName, managerId
       const userInfo: UserInfo = {
         id: String(userData.userId || userData.employeeId || userData.id || 'unknown'),
+        user_id: String(userData.userId || userData.employeeId || userData.id || 'unknown'),
         name: String(userData.name || 'Unknown'),
         nickname: String(userData.nickname || userData.name || (userData.email ? userData.email.split('@')[0] : null) || userData.userId || userData.employeeId || 'unknown'),
+        company_id: String(userData.company_id || userData.companyId || userData.id || 'unknown'),
         company_name: String(userData.company_name || userData.company || 'Unknown'),
+        department_id: String(userData.department_id || userData.departmentId || 'unknown'),
         department_name: String(userData.department_name || userData.department || 'Unknown'),
+        group_id: String(userData.group_id || userData.groupId || 'unknown'),
         group_name: String(userData.group_name || userData.group || 'Unknown'),
+        position_id: String(userData.position_id || userData.positionId || 'unknown'),
         position_name: String(userData.position_name || userData.position || 'Unknown'),
-        supervisor_nickname: String(userData.supervisor_nickname || userData.managerName || userData.manager_name || userData.supervisor || 'Unknown'),
+        supervisor_id: String(userData.supervisor_id || userData.managerId || 'unknown'),
         supervisor_name: String(userData.supervisor_name || userData.managerName || userData.manager_name || 'Unknown'),
-        admin_login_method: userData.admin_login_method || 'oidc'
+        supervisor_nickname: String(userData.supervisor_nickname || userData.managerName || userData.manager_name || userData.supervisor || 'Unknown'),
+        admin_login_method: userData.admin_login_method || 'oidc',
+        email: String(userData.email || 'unknown@example.com'),
+        foundation_user_role: userData.foundation_user_role || 'user',
+        foundation_user_permissions: userData.foundation_user_permissions || []
       };
       
       // 数据完整性验证
