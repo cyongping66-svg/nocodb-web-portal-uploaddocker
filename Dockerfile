@@ -11,9 +11,6 @@ RUN apk update && apk upgrade openssl libxml2
 COPY package*.json ./
 
 # 2. 安装所有依赖（包括 cookie-parser，需确保 package.json 中已添加）
-# 若本地 package.json 没有 cookie-parser，--save 会自动写入（无需单独执行）
-# 单独安装缺失的依赖（确保不会遗漏）
-RUN npm install cookie-parser --save  
 
 # 安裝依賴 - 使用npm install替代npm ci以解决依赖同步问题 - 使用npm install替代npm ci以解决依赖同步问题
 RUN npm install
