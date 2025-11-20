@@ -199,19 +199,18 @@ function App() {
         return arr;
       };
       
-      // 简单的SHA-256实现作为后备（仅用于开发环境）
-      const sha256Fallback = (str: string): string => {
-        // 这是一个简化的实现，仅用于开发环境测试
-        // 实际生产环境应该使用Web Crypto API
-        let hash = 0;
-        for (let i = 0; i < str.length; i++) {
-          const char = str.charCodeAt(i);
-          hash = ((hash << 5) - hash) + char;
-          hash = hash & hash; // 转换为32位整数
-        }
-        // 返回16进制字符串并转换为base64url格式
-        const hexString = Math.abs(hash).toString(16).padStart(8, '0');
-        return base64url(hexString);
+      //（用于开发环境）
+      const sha256Fallback = async (verifier: string) => {
+       const encoder = new TextEncoder()
+            const data = encoder.encode(verifier)
+            return crypto.subtle.digest('SHA-256', data)
+                .then(buffer => {
+                    const base64 = btoa(String.fromCharCode(...new Uint8Array(buffer)))
+                        .replace(/\+/g, '-')
+                        .replace(/\//g, '_')
+                        .replace(/=+$/, '')
+                    return base64
+                })
       };
       
       // 生成code verifier
