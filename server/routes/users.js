@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const DatabaseWrapper = require('../db/database');
+const DatabaseWrapper = require('../db/mysql-database');
 
 const db = new DatabaseWrapper();
 
