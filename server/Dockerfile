@@ -1,4 +1,3 @@
-# git config --global http.proxy http://127.0.0.1:git config --global http.proxy http://127.0.0.1:
 # 使用 Node.js 20 作為基礎鏡像
 FROM node:20-alpine
 

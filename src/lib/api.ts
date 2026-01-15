@@ -1,6 +1,6 @@
 // API 服務配置
 // API 基礎配置
-const API_BASE_URL = '/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 interface RequestOptions extends RequestInit {
   headers?: Record<string, string>;
