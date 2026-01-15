@@ -48,6 +48,5 @@ services:
       retries: 3
 
 volumes:
-  # 數據庫持久化存儲
-  db_data:
-    driver: local
+  # 數據庫持久化存儲 (已移除，使用外部 MySQL)
+

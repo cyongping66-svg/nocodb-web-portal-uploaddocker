@@ -36,10 +36,10 @@ fi
 
 echo -e "${GREEN}✅ 環境檢查通過${NC}"
 
-# 創建必要的目錄
-echo -e "${BLUE}📁 創建數據目錄...${NC}"
-mkdir -p data
-chmod 755 data
+# 創建必要的目錄 (已移除 SQLite 數據目錄創建)
+# echo -e "${BLUE}📁 創建數據目錄...${NC}"
+# mkdir -p data
+# chmod 755 data
 
 # 停止現有容器（如果存在）
 echo -e "${BLUE}🛑 停止現有容器...${NC}"
@@ -130,9 +130,9 @@ echo -e "  重啟服務: docker-compose restart"
 echo -e "  停止服務: docker-compose down"
 echo ""
 echo -e "${YELLOW}📝 注意事項:${NC}"
-echo -e "  • 數據保存在 ./data 目錄"
-echo -e "  • 確保防火牆開放 8081 端口"
-echo -e "  • 定期備份 ./data 目錄"
+echo -e "  • 數據存儲於外部 MySQL 數據庫"
+echo -e "  • 請確保已設置 PROD_DB_HOST 等環境變量"
+echo -e "  • 舊的 ./data 目錄可以安全刪除"
 
 # 最終狀態檢查
 echo ""
