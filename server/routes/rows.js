@@ -1,10 +1,7 @@
 const express = require('express');
 const router = express.Router();
-// We will inject the DB or use a factory. For now, we assume the server passes it or we require the configured one.
-// To make migration easier, let's assume we use the new DB wrapper which is MySQL.
-// If we want to support SQLite still, we'd need a unified interface.
-// For this task, we are migrating to MySQL.
-const DatabaseWrapper = require('../db/mysql-database'); 
+// Use DB Factory
+const DatabaseWrapper = require('../db'); 
 const { v4: uuidv4 } = require('uuid');
 const multer = require('multer');
 const fs = require('fs');

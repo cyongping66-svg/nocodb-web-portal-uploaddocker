@@ -20,9 +20,11 @@ TAG="$(date +%Y%m%d%H%M)"
 VERSION="1.5"
 FRONTEND_IMAGE="${DOCKER_USERNAME}/nocodb-frontend:${TAG}"
 BACKEND_IMAGE="${DOCKER_USERNAME}/nocodb-backend:${TAG}"
+FRONTEND_LATEST="${DOCKER_USERNAME}/nocodb-frontend:latest"
+BACKEND_LATEST="${DOCKER_USERNAME}/nocodb-backend:latest"
 
 echo -e "${BLUE}🏗️  開始構建 NocoDB Web Portal 鏡像${NC}"
-echo -e "${YELLOW}鏡像標籤: ${TAG}${NC}"
+echo -e "${YELLOW}鏡像標籤: ${TAG} 和 latest${NC}"
 echo "================================"
 
 # 檢查 Docker 登錄狀態
@@ -34,7 +36,7 @@ fi
 
 # 構建前端鏡像
 echo -e "${BLUE}🔨 構建前端鏡像: ${FRONTEND_IMAGE}${NC}"
-docker build -t ${FRONTEND_IMAGE} .
+docker build -t ${FRONTEND_IMAGE} -t ${FRONTEND_LATEST} .
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✅ 前端鏡像構建成功${NC}"
@@ -45,7 +47,7 @@ fi
 
 # 構建後端鏡像
 echo -e "${BLUE}🔨 構建後端鏡像: ${BACKEND_IMAGE}${NC}"
-docker build -t ${BACKEND_IMAGE} ./server
+docker build -t ${BACKEND_IMAGE} -t ${BACKEND_LATEST} ./server
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✅ 後端鏡像構建成功${NC}"
@@ -75,6 +77,7 @@ if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     # 推送前端鏡像
     echo -e "${BLUE}📤 推送前端鏡像...${NC}"
     docker push ${FRONTEND_IMAGE}
+    docker push ${FRONTEND_LATEST}
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✅ 前端鏡像推送成功${NC}"
@@ -86,6 +89,7 @@ if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
     # 推送後端鏡像
     echo -e "${BLUE}📤 推送後端鏡像...${NC}"
     docker push ${BACKEND_IMAGE}
+    docker push ${BACKEND_LATEST}
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✅ 後端鏡像推送成功${NC}"

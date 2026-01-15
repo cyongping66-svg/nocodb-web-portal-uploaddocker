@@ -1,28 +1,42 @@
 version: '3.8'
 
 services:
-  # 後端 API 服務器
+  # MySQL Database Service
+  mysql:
+    image: mysql:8.0
+    container_name: nocodb-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-nocodb_portal}
+      MYSQL_USER: ${MYSQL_USER:-nocodb_app}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-nocodb_password}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # Backend API Service
   backend:
-    # 修改Docker用户名和镜像版本号（1.5）
-    image: ddrenn/nocodb-backend:$(Get-Date -Format 'yyyyMMddHHmm')
+    image: ddrenn/nocodb-backend:${TAG:-latest}
     container_name: nocodb-api
     restart: unless-stopped
     environment:
       - NODE_ENV=production
       - PORT=4000
-      - DB_PATH=/app/data
-      # 數據庫類型：sqlite (默認) 或 mysql
-      # 為了修復連接錯誤，默認設為 sqlite。若需使用 MySQL，請改為 mysql 並填寫下方變量
-      - DB_TYPE=sqlite
-      # MySQL 配置示例 (需配合 DB_TYPE=mysql 使用)
-      # - PROD_DB_HOST=host.docker.internal
-      # - PROD_DB_PORT=3306
-      # - PROD_DB_USER=root
-      # - PROD_DB_PASSWORD=password
-      # - PROD_DB_NAME=nocodb_portal
-    volumes:
-      # 持久化數據庫文件到單獨目錄
-      - ./data:/app/data
+      - DB_TYPE=mysql
+      # Connect to the mysql service defined above
+      - PROD_DB_HOST=mysql
+      - PROD_DB_PORT=3306
+      - PROD_DB_USER=${MYSQL_USER:-nocodb_app}
+      - PROD_DB_PASSWORD=${MYSQL_PASSWORD:-nocodb_password}
+      - PROD_DB_NAME=${MYSQL_DATABASE:-nocodb_portal}
+    depends_on:
+      mysql:
+        condition: service_healthy
     expose:
       - "4000"
     healthcheck:
@@ -31,10 +45,9 @@ services:
       timeout: 10s
       retries: 3
 
-  # 前端 Web 應用
+  # Frontend Web Service
   frontend:
-    # 修改Docker用户名和镜像版本号（1.5）
-    image: ddrenn/nocodb-frontend:$(Get-Date -Format 'yyyyMMddHHmm')
+    image: ddrenn/nocodb-frontend:${TAG:-latest}
     container_name: nocodb-web
     restart: unless-stopped
     ports:
@@ -48,5 +61,4 @@ services:
       retries: 3
 
 volumes:
-  # 數據庫持久化存儲 (已移除，使用外部 MySQL)
-
+  mysql_data:

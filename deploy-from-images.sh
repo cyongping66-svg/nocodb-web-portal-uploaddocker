@@ -13,8 +13,11 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}🚀 開始部署 NocoDB Web Portal${NC}"
-echo -e "${YELLOW}使用預構建鏡像: clarkou/nocodb-*:250826${NC}"
+echo -e "${YELLOW}使用預構建鏡像: ddrenn/nocodb-*:latest${NC}"
 echo "================================"
+
+# 設置鏡像標籤為 latest
+export TAG=latest
 
 # 檢查 Docker 和 Docker Compose
 echo -e "${BLUE}📋 檢查環境...${NC}"

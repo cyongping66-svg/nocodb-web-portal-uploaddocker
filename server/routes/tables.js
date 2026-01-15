@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-// Switch to MySQL adapter
-const DatabaseWrapper = require('../db/mysql-database');
+// Use DB Factory
+const DatabaseWrapper = require('../db');
 const { v4: uuidv4 } = require('uuid');
 
 const db = new DatabaseWrapper();
