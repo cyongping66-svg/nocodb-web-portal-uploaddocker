@@ -54,7 +54,7 @@ services:
 
   # Frontend Web Service
   frontend:
-    image: ddrenn/nocodb-frontend:${TAG:-202601141908}
+    image: ddrenn/nocodb-frontend:${TAG:-202601142000}
     container_name: nocodb-web
     restart: unless-stopped
     ports:
