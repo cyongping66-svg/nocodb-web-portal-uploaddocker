@@ -21,7 +21,7 @@ services:
 
   # Backend API Service
   backend:
-    image: ddrenn/nocodb-backend:${TAG:-latest}
+    image: ddrenn/nocodb-backend:${TAG:-202601141942}
     container_name: nocodb-api
     restart: unless-stopped
     environment:
@@ -34,6 +34,13 @@ services:
       - PROD_DB_USER=${MYSQL_USER:-nocodb_app}
       - PROD_DB_PASSWORD=${MYSQL_PASSWORD:-nocodb_password}
       - PROD_DB_NAME=${MYSQL_DATABASE:-nocodb_portal}
+      # OIDC Configuration
+      - OIDC_ISSUER_URL=${OIDC_ISSUER_URL}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - OIDC_REDIRECT_URI=${OIDC_REDIRECT_URI}
+      - OIDC_SCOPES=${OIDC_SCOPES:-openid profile email}
+      - COOKIE_SECRET=${COOKIE_SECRET:-production-secret-key}
     depends_on:
       mysql:
         condition: service_healthy
@@ -47,7 +54,7 @@ services:
 
   # Frontend Web Service
   frontend:
-    image: ddrenn/nocodb-frontend:${TAG:-202601141942}
+    image: ddrenn/nocodb-frontend:${TAG:-202601141908}
     container_name: nocodb-web
     restart: unless-stopped
     ports:

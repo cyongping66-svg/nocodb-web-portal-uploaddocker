@@ -39,10 +39,45 @@ fi
 
 echo -e "${GREEN}✅ 環境檢查通過${NC}"
 
-# 創建必要的目錄 (已移除 SQLite 數據目錄創建)
-# echo -e "${BLUE}📁 創建數據目錄...${NC}"
-# mkdir -p data
-# chmod 755 data
+# 配置檢查與生成 (.env)
+if [ ! -f .env ]; then
+    echo -e "${YELLOW}⚠️  未檢測到 .env 配置文件，將引導生成...${NC}"
+    
+    echo -e "${BLUE}--- 數據庫配置 ---${NC}"
+    read -p "請輸入 MySQL 密碼 (默認: nocodb_password): " DB_PASS
+    DB_PASS=${DB_PASS:-nocodb_password}
+    
+    echo -e "${BLUE}--- OIDC (SSO) 配置 ---${NC}"
+    read -p "OIDC Issuer URL (例如: https://auth.example.com): " OIDC_URL
+    read -p "OIDC Client ID: " OIDC_ID
+    read -p "OIDC Client Secret: " OIDC_SECRET
+    read -p "本站回調地址 (例如: http://your-domain.com/api/auth/callback): " OIDC_CB
+    
+    # 寫入 .env 文件
+    cat > .env <<EOF
+# MySQL Configuration
+MYSQL_ROOT_PASSWORD=${DB_PASS}
+MYSQL_DATABASE=nocodb_portal
+MYSQL_USER=nocodb_app
+MYSQL_PASSWORD=${DB_PASS}
+
+# OIDC Configuration
+OIDC_ISSUER_URL=${OIDC_URL}
+OIDC_CLIENT_ID=${OIDC_ID}
+OIDC_CLIENT_SECRET=${OIDC_SECRET}
+OIDC_REDIRECT_URI=${OIDC_CB}
+OIDC_SCOPES=openid profile email
+COOKIE_SECRET=$(openssl rand -hex 32)
+EOF
+    echo -e "${GREEN}✅ 配置文件 .env 已生成${NC}"
+else
+    echo -e "${GREEN}✅ 檢測到現有 .env 文件，將加載配置${NC}"
+fi
+
+# 加載環境變量
+set -a
+source .env
+set +a
 
 # 停止現有容器（如果存在）
 echo -e "${BLUE}🛑 停止現有容器...${NC}"
@@ -133,9 +168,8 @@ echo -e "  重啟服務: docker-compose restart"
 echo -e "  停止服務: docker-compose down"
 echo ""
 echo -e "${YELLOW}📝 注意事項:${NC}"
-echo -e "  • 數據存儲於外部 MySQL 數據庫"
-echo -e "  • 請確保已設置 PROD_DB_HOST 等環境變量"
-echo -e "  • 舊的 ./data 目錄可以安全刪除"
+echo -e "  • 數據存儲於 Docker Volume: mysql_data"
+echo -e "  • OIDC 回調地址需在提供商處配置為: ${OIDC_REDIRECT_URI}"
 
 # 最終狀態檢查
 echo ""
