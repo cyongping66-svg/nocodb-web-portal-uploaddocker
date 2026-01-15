@@ -4,7 +4,10 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
-const DatabaseWrapper = require('./db/mysql-database'); // Switch to MySQL Adapter
+const DB_TYPE = process.env.DB_TYPE || 'sqlite';
+const DatabaseWrapper = DB_TYPE === 'mysql' 
+  ? require('./db/mysql-database') 
+  : require('./db/database');
 const cookieParser = require('cookie-parser');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpecs = require('./config/swagger');

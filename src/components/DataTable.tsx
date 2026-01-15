@@ -153,17 +153,17 @@ function SortableHeader({ column, sortConfig, onSort, onDelete, columnWidth, onR
                   </PopoverTrigger>
                   <PopoverContent className="w-60">
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">关联信息</div>
+                      <div className="text-sm font-medium">關聯資訊</div>
                       
                       {/* 显示正向关联信息 */}
                       {isSourceRelation && (
                         <div className="space-y-1 pl-1">
                           <div className="text-xs text-muted-foreground">
-                            关联表: {allTables.find(t => t.id === column.relation?.targetTableId)?.name || '未知表格'}
+                            關聯表格: {allTables.find(t => t.id === column.relation?.targetTableId)?.name || '未知表格'}
                           </div>
                           {column.relation?.targetColumnId && (
                             <div className="text-xs text-muted-foreground">
-                              关联字段: {(() => {
+                              關聯欄位: {(() => {
                                 const targetTable = allTables.find(t => t.id === column.relation?.targetTableId);
                                 return targetTable?.columns?.find(c => c.id === column.relation?.targetColumnId)?.name || column.relation?.targetColumnId;
                               })()}
@@ -175,7 +175,7 @@ function SortableHeader({ column, sortConfig, onSort, onDelete, columnWidth, onR
                       {/* 显示反向关联信息 */}
                       {isTargetRelation && (
                         <div className="space-y-1 pl-1">
-                          <div className="text-xs text-muted-foreground font-medium">被以下表关联:</div>
+                          <div className="text-xs text-muted-foreground font-medium">被以下表格關聯:</div>
                           {allTables
                             .filter(otherTable => 
                               otherTable.id !== table.id && 

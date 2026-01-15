@@ -1481,7 +1481,7 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
             <div className="mt-2 flex items-center justify-between text-sm rounded-md px-3 py-2 hover:bg-muted">
               <div className="flex items-center gap-2">
                 <Database className="w-4 h-4 text-green-600" />
-                <span className="text-muted-foreground">本地存儲 (SQLite)</span>
+                <span className="text-muted-foreground">數據庫 (MySQL)</span>
               </div>
               {error && (
                 <span className="text-sm text-red-600">連接錯誤</span>

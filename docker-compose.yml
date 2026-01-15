@@ -11,6 +11,15 @@ services:
       - NODE_ENV=production
       - PORT=4000
       - DB_PATH=/app/data
+      # 數據庫類型：sqlite (默認) 或 mysql
+      # 為了修復連接錯誤，默認設為 sqlite。若需使用 MySQL，請改為 mysql 並填寫下方變量
+      - DB_TYPE=sqlite
+      # MySQL 配置示例 (需配合 DB_TYPE=mysql 使用)
+      # - PROD_DB_HOST=host.docker.internal
+      # - PROD_DB_PORT=3306
+      # - PROD_DB_USER=root
+      # - PROD_DB_PASSWORD=password
+      # - PROD_DB_NAME=nocodb_portal
     volumes:
       # 持久化數據庫文件到單獨目錄
       - ./data:/app/data
