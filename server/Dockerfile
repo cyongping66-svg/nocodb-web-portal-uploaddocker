@@ -1,8 +1,8 @@
 # 使用 Node.js 20 作為基礎鏡像
 FROM node:20-alpine
 
-# 安裝 Python 和 make（用於 node-gyp 構建）
-RUN apk add --no-cache python3 make g++
+# 升级系統包並修復安全漏洞 (CVE-2026-22184 zlib)
+RUN apk update && apk upgrade && apk add --no-cache zlib python3 make g++
 
 # 設置工作目錄
 WORKDIR /app

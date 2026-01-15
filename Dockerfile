@@ -4,8 +4,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# 升级 openssl 和 libxml2 到仓库中可用的最新版本
-RUN apk update && apk upgrade openssl libxml2
+# 升级系統包並修復安全漏洞 (CVE-2026-22184 zlib)
+RUN apk update && apk upgrade && apk add --no-cache zlib openssl libxml2
 
 # 1. 先复制 package.json 和 package-lock.json（关键：避免后续覆盖）
 COPY package*.json ./
@@ -24,8 +24,8 @@ RUN npm run build
 # 生產階段 - 使用 nginx 提供靜態文件
 FROM nginx:alpine
 
-# 升级 openssl 和 libxml2 到仓库中可用的最新版本
-RUN apk update && apk upgrade openssl libxml2
+# 升级系統包並修復安全漏洞 (CVE-2026-22184 zlib)
+RUN apk update && apk upgrade && apk add --no-cache zlib openssl libxml2
 
 # 複製構建好的文件到 nginx 目錄
 COPY --from=builder /app/dist /usr/share/nginx/html
