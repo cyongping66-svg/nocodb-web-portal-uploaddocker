@@ -80,9 +80,13 @@ router.get('/login', async (req, res) => {
     const returnTo = req.query.return_to || (req.headers.referer || '/');
 
     // Store verifier/state/returnTo in httpOnly cookies
-    res.cookie('oidc_state', state, { httpOnly: true, sameSite: 'lax' });
-    res.cookie('oidc_verifier', codeVerifier, { httpOnly: true, sameSite: 'lax' });
-    res.cookie('oidc_return_to', returnTo, { httpOnly: true, sameSite: 'lax' });
+    // Using strict sameSite if possible, but lax is better for OIDC redirect flows
+    // Adding secure: false explicitly for dev/http, but in prod it should ideally be true if https
+    const isSecure = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https';
+    
+    res.cookie('oidc_state', state, { httpOnly: true, sameSite: 'lax', secure: isSecure });
+    res.cookie('oidc_verifier', codeVerifier, { httpOnly: true, sameSite: 'lax', secure: isSecure });
+    res.cookie('oidc_return_to', returnTo, { httpOnly: true, sameSite: 'lax', secure: isSecure });
 
     const authorizationUrl = client.authorizationUrl({
       scope: OIDC_SCOPES,

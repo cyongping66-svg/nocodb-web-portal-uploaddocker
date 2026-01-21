@@ -1,9 +1,5 @@
-const DB_TYPE = process.env.DB_TYPE || 'sqlite';
+const DB_TYPE = 'mysql';
 
 console.log(`[DB Factory] Using database driver: ${DB_TYPE}`);
 
-if (DB_TYPE === 'mysql') {
-  module.exports = require('./mysql-database');
-} else {
-  module.exports = require('./database');
-}
+module.exports = require('./mysql-database');

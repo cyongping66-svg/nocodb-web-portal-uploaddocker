@@ -9,7 +9,6 @@
     "init-db": "node scripts/init-db.js"
   },
   "dependencies": {
-    "better-sqlite3": "^12.4.1",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
@@ -30,7 +29,7 @@
     "api",
     "database",
     "express",
-    "sqlite"
+    "mysql"
   ],
   "author": "",
   "license": "MIT"
