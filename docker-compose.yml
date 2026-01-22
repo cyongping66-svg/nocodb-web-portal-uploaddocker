@@ -54,7 +54,7 @@ services:
     container_name: nocodb-web
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "8081:80"
     depends_on:
       - backend
     healthcheck:
