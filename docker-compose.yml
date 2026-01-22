@@ -1,7 +1,8 @@
 version: '3.8'
 
 services:
-  # MySQL Database Service
+  # MySQL Database Service (Docker 內部數據庫)
+  # 環節一：API 將默認連接到這個數據庫
   mysql:
     image: mysql:8.0
     container_name: nocodb-mysql
@@ -28,12 +29,14 @@ services:
       - NODE_ENV=production
       - PORT=4000
       - DB_TYPE=mysql
-      # Connect to the mysql service defined above
-      - PROD_DB_HOST=mysql
-      - PROD_DB_PORT=3306
-      - PROD_DB_USER=${MYSQL_USER:-nocodb_app}
-      - PROD_DB_PASSWORD=${MYSQL_PASSWORD:-nocodb_password}
-      - PROD_DB_NAME=${MYSQL_DATABASE:-nocodb_portal}
+      # 動態配置邏輯：
+      # 1. 如果 .env 裡沒填 (或填了 mysql)，就連上面的 mysql 容器 (環節一)
+      # 2. 如果 .env 裡填了外部 IP，就連外部數據庫 (環節二)
+      - PROD_DB_HOST=${PROD_DB_HOST:-mysql}
+      - PROD_DB_PORT=${PROD_DB_PORT:-3306}
+      - PROD_DB_USER=${PROD_DB_USER:-nocodb_app}
+      - PROD_DB_PASSWORD=${PROD_DB_PASSWORD:-nocodb_password}
+      - PROD_DB_NAME=${PROD_DB_NAME:-nocodb_portal}
     depends_on:
       mysql:
         condition: service_healthy
@@ -47,11 +50,11 @@ services:
 
   # Frontend Web Service
   frontend:
-    image: ddrenn/nocodb-frontend:${TAG:-202601141942}
+    image: ddrenn/nocodb-frontend:${TAG:-latest}
     container_name: nocodb-web
     restart: unless-stopped
     ports:
-      - "8081:80"
+      - "80:80"
     depends_on:
       - backend
     healthcheck:

@@ -237,22 +237,54 @@ class MySQLDatabaseWrapper {
   }
 
   createRow(tableId, rowData, callback) {
+    // Ensure ID exists
+    if (!rowData.id) {
+        rowData.id = uuidv4();
+    }
     const { id, ...data } = rowData;
+    
     const p = (async () => {
       await this.pool.query(
-        'INSERT INTO \`rows\` (id, table_id, data) VALUES (?, ?, ?)',
+        'INSERT INTO `rows` (id, table_id, data) VALUES (?, ?, ?)',
         [id, tableId, JSON.stringify(rowData)]
       );
+      // Return the created row data (including generated ID) to be helpful
+      return rowData;
     })();
     return this._callback(p, callback);
   }
 
   updateRow(rowId, rowData, callback) {
     const p = (async () => {
-      await this.pool.query(
-        'UPDATE \`rows\` SET data = ? WHERE id = ?',
-        [JSON.stringify(rowData), rowId]
-      );
+      const connection = await this.pool.getConnection();
+      try {
+        await connection.beginTransaction();
+        
+        // 1. Fetch existing row first to avoid overwriting other fields (Partial Update)
+        const [rows] = await connection.query('SELECT data FROM `rows` WHERE id = ? FOR UPDATE', [rowId]);
+        if (rows.length === 0) {
+           throw new Error('Row not found');
+        }
+        
+        const existingData = typeof rows[0].data === 'string' ? JSON.parse(rows[0].data) : rows[0].data;
+        
+        // 2. Merge existing data with new data
+        const mergedData = { ...existingData, ...rowData };
+        
+        // 3. Update with merged data
+        await connection.query(
+          'UPDATE `rows` SET data = ? WHERE id = ?',
+          [JSON.stringify(mergedData), rowId]
+        );
+        
+        await connection.commit();
+        return mergedData;
+      } catch (err) {
+        await connection.rollback();
+        throw err;
+      } finally {
+        connection.release();
+      }
     })();
     return this._callback(p, callback);
   }
