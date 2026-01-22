@@ -1491,7 +1491,7 @@ const [historyPageSize, setHistoryPageSize] = useState<number>(20);
             {/* 版本信息 - 显示在本地存储文字的下方 */}
             <div className="mt-2 flex items-center text-sm rounded-md px-3 py-2 hover:bg-muted">
               <History className="w-4 h-4 text-muted-foreground mr-2" />
-              <span className="text-muted-foreground">版本信息: v1.1</span>
+              <span className="text-muted-foreground">版本信息: v1.2</span>
             </div>
           </div>
           
